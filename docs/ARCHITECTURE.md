@@ -9,18 +9,22 @@ Merchant surface (Receive tab)
   → Customer surface (Send tab, real device camera via expo-camera)
   → out-of-order reconstruction + verification
   → device authentication / signature boundary
-  → BMONI adapter (online)
+  → BMONI adapter (online) or Morrow Reserve (offline)
+  → local wallet deduction, signed PaymentConfirmation broadcast back to merchant
+  → merchant scans + verifies the confirmation, local wallet credited
   → settlement receipt on both surfaces + local activity history
 ```
 
+Both devices' balances genuinely move — see "Morrow Wallet + confirmation loop" below. Neither is connected to BMONI or any shared backend; this is a real two-device simulation, not a scripted animation.
+
 ### App surfaces (Expo Router tabs)
 
-- `src/app/(tabs)/index.tsx` — Home: sandbox balance, quick actions, recent activity.
-- `src/app/(tabs)/receive.tsx` — create a payment request and broadcast it as an animated fountain-coded QR stream.
-- `src/app/(tabs)/send.tsx` — scan the merchant's screen with the real device camera, review, authenticate, settle.
-- `src/app/(tabs)/activity.tsx` — full local receipt history.
+- `src/app/(tabs)/index.tsx` — Home: real local wallet balance, Morrow Reserve card, quick actions, recent activity.
+- `src/app/(tabs)/receive.tsx` — create a payment request, broadcast it as an animated fountain-coded QR stream, then scan the payer's confirmation to credit this device's balance.
+- `src/app/(tabs)/send.tsx` — scan the merchant's screen with the real device camera, review, pay (online or from Reserve), then broadcast a signed confirmation back to the merchant.
+- `src/app/(tabs)/activity.tsx` — full local receipt history, direction-aware (sent vs. received).
 
-Testing the optical handoff end-to-end requires two devices (or two Expo Go instances): one showing Receive, one scanning with Send. This is intentional — it is real device-to-device transport, not a single-screen simulation.
+Testing the optical handoff end-to-end requires two devices (or two Expo Go instances): one showing Receive, one scanning with Send, then roles reverse for the confirmation leg. This is intentional — it is real device-to-device transport, not a single-screen simulation.
 
 ### Morrow Protocol (`src/lib/protocol.ts`)
 
@@ -47,10 +51,18 @@ Both are backed by `@react-native-async-storage/async-storage` and are async. Re
 
 ## State model (Send flow)
 
-`scan → review → auth → settling → done`
+`scan → review → auth → settling → confirming → done` (Reserve path skips `auth`/`settling`)
 
 Errors return to the nearest recoverable stage (usually back to `scan`). Authentication and settlement are separate so the product never suggests that local signing alone moved funds.
 
-### Morrow Reserve (`src/lib/reserve.ts`, `src/lib/reserveKeys.ts`)
+### Morrow Wallet + confirmation loop (`src/lib/wallet.ts`, `src/lib/confirmation.ts`, `src/lib/deviceKeys.ts`)
 
-From `review`, if the request amount fits within an active on-device Reserve allowance, `send.tsx` offers a second path — `payFromReserve()` — that never touches `auth`/`settling`/BMONI at all. It signs an `OfflineAuthorization` with a device-generated Ed25519 keypair (`@noble/curves`, pure JS, no native module), self-verifies it, and lands on `done` with `receipt.status === 'pending'`, rendered as "Payment verified — settlement pending," never "Payment settled." See [RESERVE.md](./RESERVE.md) for what's genuinely cryptographically enforced here versus what still requires online reconciliation.
+Each device has its own real, persisted balance (`wallet.ts`, AsyncStorage) — not a display constant. After `send.tsx` settles a payment (either the BMONI-simulated path or Morrow Reserve), it deducts the amount from its own wallet, signs a `PaymentConfirmation` bound to the exact request (`confirmation.ts`, same Ed25519 device keypair as Reserve — see `deviceKeys.ts`), and broadcasts it optically (`confirming` stage, reusing the same fountain/QR pipeline as `receive.tsx`).
+
+`receive.tsx` broadcasts the request as before, then — once the payer confirms — the merchant taps "I've been paid" and scans that confirmation with the same camera-scanning pipeline `send.tsx` uses for requests. `verifyPaymentConfirmation` checks the signature, that the amount matches the original request, and that this exact request hasn't already been credited, before crediting the merchant's own wallet.
+
+Nothing here touches BMONI or any shared backend — it's a real, cryptographically-checked, two-device balance transfer entirely local to each device. A dedicated wallet that's actually backed by BMONI (or literally shared between devices) is future work; today, "real" means the math and the signatures are real, not that the money is real.
+
+### Morrow Reserve (`src/lib/reserve.ts`)
+
+From `review`, if the request amount fits within an active on-device Reserve allowance, `send.tsx` offers a second path — `payFromReserve()` — that never touches `auth`/`settling`/BMONI at all. It signs an `OfflineAuthorization` with the device keypair, self-verifies it, and lands on `confirming` → `done` with `receipt.status === 'pending'`, rendered as "Payment verified — settlement pending," never "Payment settled." Reserve funds are moved out of the wallet balance the moment the Reserve is provisioned on Home (`index.tsx`'s `addToReserve`) — spending from the Reserve later does not touch the wallet again. See [RESERVE.md](./RESERVE.md) for what's genuinely cryptographically enforced here versus what still requires online reconciliation.
