@@ -13,7 +13,7 @@ Morrow Settlement  BMONI-backed online redemption (existing, gated on real BMONI
 ## What's real here, and what isn't
 
 **Real:**
-- Reserve provisioning, spending, and verification (`src/lib/reserve.ts`, `src/lib/reserveKeys.ts`) use genuine Ed25519 public-key signatures via [`@noble/curves`](https://github.com/paulmillr/noble-curves), a pure-JS, audited implementation with no native module dependency — it works in Expo Go, no dev client needed.
+- Reserve provisioning, spending, and verification (`src/lib/reserve.ts`, `src/lib/deviceKeys.ts`) use genuine Ed25519 public-key signatures via [`@noble/curves`](https://github.com/paulmillr/noble-curves), a pure-JS, audited implementation with no native module dependency — it works in Expo Go, no dev client needed. The same device keypair also signs `PaymentConfirmation`s (`src/lib/confirmation.ts`) — see the "Morrow Wallet + confirmation loop" section of `docs/ARCHITECTURE.md`.
 - Each device generates and persists its own keypair on first use (`AsyncStorage`, not hardware-backed — see Limitations).
 - A `ReserveAllowance` (amount, currency, expiry) is signed by the device the moment it's provisioned.
 - Each spend produces a signed `OfflineAuthorization` chained to the previous state via `previousStateHash`, with a monotonic `sequence` counter, bound to one specific `PaymentRequest.id` (so it's useless if intercepted and replayed against a different recipient), and checked against the remaining allowance balance before being issued.
