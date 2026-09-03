@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect } from 'expo-router';
+import QRCode from 'react-native-qrcode-svg';
 
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
@@ -10,15 +11,18 @@ import { Card, Screen } from '@/components/ui/screen';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { bmoniAdapter } from '@/lib/bmoni';
+import { createPaymentConfirmation, serializeConfirmation } from '@/lib/confirmation';
 import { formatMoney } from '@/lib/format';
 import { saveReceipt } from '@/lib/history';
-import { decodeFrame, OpticalReceiver } from '@/lib/optical';
+import { decodeFrame, encodeFrame, encodeFrames, OpticalReceiver } from '@/lib/optical';
 import { deserializeRequest, randomId, verifyPaymentRequest } from '@/lib/protocol';
 import { markProcessed, wasProcessed } from '@/lib/replay';
 import { getActiveReserve, spendFromReserve, verifyOfflineAuthorization } from '@/lib/reserve';
-import type { PaymentRequest, ReserveState, SettlementReceipt } from '@/lib/types';
+import { deduct, getBalance } from '@/lib/wallet';
+import type { PaymentConfirmation, PaymentRequest, ReserveState, SettlementReceipt } from '@/lib/types';
 
-type Stage = 'scan' | 'review' | 'auth' | 'settling' | 'done';
+type Stage = 'scan' | 'review' | 'auth' | 'settling' | 'confirming' | 'done';
+const CONFIRM_FRAME_INTERVAL_MS = 120;
 
 export default function SendScreen() {
   const theme = useTheme();
@@ -27,6 +31,9 @@ export default function SendScreen() {
   const [progress, setProgress] = useState(0);
   const [received, setReceived] = useState<PaymentRequest | null>(null);
   const [receipt, setReceipt] = useState<SettlementReceipt | null>(null);
+  const [confirmation, setConfirmation] = useState<PaymentConfirmation | null>(null);
+  const [confirmFrameIndex, setConfirmFrameIndex] = useState(0);
+  const [balance, setBalance] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [cameraActive, setCameraActive] = useState(true);
   const [reserve, setReserve] = useState<ReserveState | null>(null);
@@ -39,10 +46,22 @@ export default function SendScreen() {
     return receiverRef.current;
   }, []);
 
+  const confirmationFrames = useMemo(
+    () => (confirmation ? encodeFrames(serializeConfirmation(confirmation), confirmation.requestId) : []),
+    [confirmation]
+  );
+
+  useEffect(() => {
+    if (!confirmationFrames.length) return;
+    const timer = setInterval(() => setConfirmFrameIndex(i => (i + 1) % confirmationFrames.length), CONFIRM_FRAME_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [confirmationFrames]);
+
   useFocusEffect(
     useCallback(() => {
       setCameraActive(true);
       getActiveReserve().then(setReserve);
+      getBalance().then(setBalance);
       return () => setCameraActive(false);
     }, [])
   );
@@ -54,7 +73,10 @@ export default function SendScreen() {
     setProgress(0);
     setReceived(null);
     setReceipt(null);
+    setConfirmation(null);
+    setConfirmFrameIndex(0);
     setError('');
+    getBalance().then(setBalance);
   }
 
   async function handleBarcodeScanned(result: BarcodeScanningResult) {
@@ -79,18 +101,39 @@ export default function SendScreen() {
     }
   }
 
+  async function afterSettlement(nextReceipt: SettlementReceipt, request: PaymentRequest, options: { deductWallet: boolean }) {
+    if (options.deductWallet) {
+      await deduct(request.amountMinor);
+      setBalance(await getBalance());
+    }
+    const nextConfirmation = await createPaymentConfirmation({
+      requestId: request.id,
+      amountMinor: request.amountMinor,
+      currency: request.currency,
+      payerLabel: 'Morrow customer',
+      settlementReference: nextReceipt.reference,
+    });
+    await markProcessed(request.id);
+    await saveReceipt(nextReceipt);
+    setReceipt(nextReceipt);
+    setConfirmation(nextConfirmation);
+    setConfirmFrameIndex(0);
+    setStage('confirming');
+  }
+
   async function confirm() {
     if (!received) return;
     setError('');
+    if (balance !== null && received.amountMinor > balance) {
+      setError('Insufficient balance for this payment.');
+      return;
+    }
     setStage('auth');
     try {
       await bmoniAdapter.authenticate();
       setStage('settling');
       const nextReceipt = await bmoniAdapter.settle(received);
-      await markProcessed(received.id);
-      await saveReceipt(nextReceipt);
-      setReceipt(nextReceipt);
-      setStage('done');
+      await afterSettlement({ ...nextReceipt, status: 'settled', direction: 'sent' }, received, { deductWallet: true });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Settlement could not be completed. Your account was not charged.');
       setStage('review');
@@ -116,6 +159,7 @@ export default function SendScreen() {
         id: randomId('rcpt'),
         requestId: received.id,
         status: 'pending',
+        direction: 'sent',
         amountMinor: received.amountMinor,
         currency: received.currency,
         merchantName: received.merchant.name,
@@ -123,10 +167,9 @@ export default function SendScreen() {
         settledAt: Date.now(),
         reference: `${auth.allowanceId}:${auth.sequence}`,
       };
-      await markProcessed(received.id);
-      await saveReceipt(nextReceipt);
-      setReceipt(nextReceipt);
-      setStage('done');
+      // Already deducted from the wallet when this Reserve was created —
+      // spending from it now only decrements the Reserve's own bookkeeping.
+      await afterSettlement(nextReceipt, received, { deductWallet: false });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not pay from Morrow Reserve.');
     }
@@ -200,7 +243,7 @@ export default function SendScreen() {
 
         <View style={styles.balanceRow}>
           <ThemedText themeColor="textSecondary">Pay from</ThemedText>
-          <ThemedText type="smallBold">BMONI CNGN balance</ThemedText>
+          <ThemedText type="smallBold">{balance !== null ? formatMoney(balance, received.currency) : '…'} available</ThemedText>
         </View>
 
         {error ? <ThemedText themeColor="danger">{error}</ThemedText> : null}
@@ -228,6 +271,27 @@ export default function SendScreen() {
     );
   }
 
+  if (stage === 'confirming' && confirmation && received) {
+    const currentFrame = confirmationFrames[confirmFrameIndex];
+    return (
+      <Screen>
+        <ThemedText type="small" themeColor="positive">
+          Your balance has been debited
+        </ThemedText>
+        <ThemedText type="title" style={styles.title}>
+          Confirm with {received.merchant.name}
+        </ThemedText>
+        <ThemedText themeColor="textSecondary">Hold this screen up to the merchant's camera to complete the transfer on their side.</ThemedText>
+
+        <Card style={styles.qrCard}>
+          {currentFrame && <QRCode value={encodeFrame(currentFrame)} size={240} backgroundColor={theme.surface} color={theme.text} />}
+        </Card>
+
+        <Button label="Done" onPress={() => setStage('done')} />
+      </Screen>
+    );
+  }
+
   if (stage === 'done' && receipt) {
     const isPending = receipt.status === 'pending';
     return (
@@ -239,6 +303,13 @@ export default function SendScreen() {
           {formatMoney(receipt.amountMinor, receipt.currency)}
         </ThemedText>
         <ThemedText themeColor="textSecondary">to {receipt.merchantName}</ThemedText>
+
+        {balance !== null && (
+          <View style={styles.balanceRow}>
+            <ThemedText themeColor="textSecondary">New balance</ThemedText>
+            <ThemedText type="smallBold">{formatMoney(balance, receipt.currency)}</ThemedText>
+          </View>
+        )}
 
         {isPending && (
           <Card>
@@ -281,6 +352,7 @@ const styles = StyleSheet.create({
   scanError: { color: '#FF8A73', textAlign: 'center' },
   balanceRow: { flexDirection: 'row', justifyContent: 'space-between' },
   processingRow: { alignItems: 'center' },
+  qrCard: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.five },
   receiptRow: { flexDirection: 'row', justifyContent: 'space-between' },
   orDivider: { textAlign: 'center' },
 });
