@@ -2,7 +2,9 @@
 
 **Transactions, device to device.**
 
-Morrow is a native fintech app (Expo / React Native) built around networkless device-to-device payment negotiation with eventual online settlement through BMONI. A merchant creates a request on the **Receive** tab; Morrow serializes it and broadcasts it as a continuous animated QR stream. On another device, the **Send** tab uses the real camera to scan, reconstruct, and verify the request, then authenticates and settles it through BMONI.
+Morrow is a native fintech app (Expo / React Native) built around networkless device-to-device payment negotiation with eventual online settlement through BMONI. A merchant creates a request on the **Receive** tab; Morrow serializes it and broadcasts it as a continuous animated QR stream. On another device, the **Send** tab uses the real camera to scan, reconstruct, and verify the request, then pays it — either online through BMONI or offline through Morrow Reserve — and broadcasts a signed confirmation back. The merchant scans that confirmation to close the loop.
+
+Both devices' balances are real, persisted, and actually move — this is a genuine two-device simulation with real signatures at every step, not a scripted animation. Neither balance is connected to BMONI or any shared backend; see "Morrow Wallet + confirmation loop" in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for exactly what's real and what isn't.
 
 > Morrow does not claim fully offline settlement. Only the request handoff is networkless. The settlement step requires connectivity.
 
@@ -47,10 +49,11 @@ npx tsc --noEmit   # typecheck
 1. On device A, open the **Receive** tab, enter an amount and note, and create the request. The screen begins broadcasting an animated QR.
 2. On device B, open the **Send** tab and grant camera access. Point the camera at device A's screen — reconstruction is loss-tolerant and works even if frames are missed or arrive out of order.
 3. Review the independently reconstructed request and its integrity status on device B.
-4. Confirm. Morrow shows device authentication separately from online BMONI settlement.
-5. View the receipt; it's saved to the **Activity** tab and reflected on the **Home** tab.
+4. Confirm. Device B's own balance is really debited (check the **Home** tab before and after). Morrow shows device authentication separately from online BMONI settlement.
+5. Device B now broadcasts a signed confirmation. On device A, tap "I've been paid — scan confirmation" and point the camera at device B. Device A's balance is really credited once the signature and amount check out.
+6. Both receipts are saved to each device's own **Activity** tab — device B's shown as sent (−), device A's as received (+).
 
-Alternatively, at step 4, if the paying device has an active **Morrow Reserve** (Home tab → "Add to Reserve"), a second button appears — "Pay from Reserve (offline)." This settles with a real signed authorization and zero network calls, landing on "Payment verified — settlement pending" instead of "Payment settled." See [docs/RESERVE.md](docs/RESERVE.md).
+Alternatively, at step 4, if device B has an active **Morrow Reserve** (Home tab → "Add to Reserve"), a second button appears — "Pay from Reserve (offline)." This settles with a real signed authorization and zero network calls, landing on "Payment verified — settlement pending" instead of "Payment settled" — steps 5–6 still happen exactly the same way. See [docs/RESERVE.md](docs/RESERVE.md).
 
 ## Project structure
 
@@ -64,8 +67,10 @@ src/lib/bmoniApi.ts      BMONI sandbox REST client
 src/lib/bmoniIdentity.ts device wallet + BMONI user/wallet provisioning
 src/lib/bmoniSigner.ts   wraps BMONI's native on-device signing SDK
 src/lib/history.ts       local receipt history (AsyncStorage)
+src/lib/wallet.ts        real per-device persisted balance (AsyncStorage)
+src/lib/confirmation.ts  signed PaymentConfirmation: broadcast back after paying, credits the payee
+src/lib/deviceKeys.ts    device Ed25519 keypair (@noble/curves), shared by Reserve and confirmations
 src/lib/reserve.ts       Morrow Reserve: offline allowance + signed authorizations
-src/lib/reserveKeys.ts   device Ed25519 keypair for Reserve signing (@noble/curves)
 src/vendor/decimen/      extracted Decimen v0.3.0 LT fountain core, MIT
 src/components/          Morrow branding (real Figma-sourced symbol/wordmark) and UI primitives
 docs/                    architecture, BMONI integration handoff, and Morrow Reserve
