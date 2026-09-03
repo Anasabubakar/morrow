@@ -3,14 +3,15 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import * as Crypto from 'expo-crypto';
 import { Base64 } from 'js-base64';
 
-// Morrow Reserve's own device keypair — separate from BMONI's wallet key.
+// Morrow's own device keypair — separate from BMONI's wallet key. Used to
+// sign both Reserve allowances/authorizations and payment confirmations.
 // Ed25519 via @noble/curves, a pure-JS implementation with no native module
 // dependency, so it works in Expo Go and doesn't need the BMONI dev client.
 // Key generation needs a real random seed; noble's own randomPrivateKey()
 // pulls from `crypto.getRandomValues`, which isn't guaranteed present in
 // Hermes, so the seed is sourced directly from expo-crypto instead — signing
 // itself is deterministic and needs no randomness at call time.
-const STORAGE_KEY = 'morrow.reserve-device-key.v1';
+const STORAGE_KEY = 'morrow.device-key.v1';
 
 let cached: { privateKey: Uint8Array; publicKey: Uint8Array } | null = null;
 
