@@ -29,22 +29,29 @@ export default function ActivityScreen() {
           <ThemedText themeColor="textSecondary">Nothing here yet. Completed payments will appear in this list.</ThemedText>
         </Card>
       ) : (
-        receipts.map(item => (
-          <Card key={item.id} style={styles.row}>
-            <View style={styles.info}>
-              <ThemedText type="default">{item.merchantName}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {new Date(item.settledAt).toLocaleString()} · {item.reference}
-              </ThemedText>
-            </View>
-            <View style={styles.amountBlock}>
-              <ThemedText type="smallBold">{formatMoney(item.amountMinor, item.currency)}</ThemedText>
-              <ThemedText type="small" themeColor={item.status === 'settled' ? 'positive' : 'textSecondary'}>
-                {item.status === 'settled' ? 'Settled' : 'Pending settlement'}
-              </ThemedText>
-            </View>
-          </Card>
-        ))
+        receipts.map(item => {
+          const sent = item.direction === 'sent';
+          const counterparty = sent ? item.merchantName : item.customerName;
+          return (
+            <Card key={item.id} style={styles.row}>
+              <View style={styles.info}>
+                <ThemedText type="default">{counterparty}</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {new Date(item.settledAt).toLocaleString()} · {item.reference}
+                </ThemedText>
+              </View>
+              <View style={styles.amountBlock}>
+                <ThemedText type="smallBold" themeColor={sent ? 'text' : 'positive'}>
+                  {sent ? '−' : '+'}
+                  {formatMoney(item.amountMinor, item.currency)}
+                </ThemedText>
+                <ThemedText type="small" themeColor={item.status === 'settled' ? 'positive' : 'textSecondary'}>
+                  {item.status === 'settled' ? 'Settled' : 'Pending settlement'}
+                </ThemedText>
+              </View>
+            </Card>
+          );
+        })
       )}
     </Screen>
   );
