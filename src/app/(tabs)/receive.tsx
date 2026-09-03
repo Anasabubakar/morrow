@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, TextInput, View } from 'react-native';
+import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
+import * as Haptics from 'expo-haptics';
 import QRCode from 'react-native-qrcode-svg';
 
 import { ThemedText } from '@/components/themed-text';
@@ -8,13 +10,18 @@ import { Card, Screen } from '@/components/ui/screen';
 import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { stablecoinFor } from '@/lib/bmoniApi';
+import { deserializeConfirmation, markConfirmationRedeemed, verifyPaymentConfirmation } from '@/lib/confirmation';
 import { formatMoney } from '@/lib/format';
-import { encodeFrame, encodeFrames } from '@/lib/optical';
-import { createPaymentRequest, serializeRequest } from '@/lib/protocol';
-import type { PaymentRequest } from '@/lib/types';
+import { saveReceipt } from '@/lib/history';
+import { decodeFrame, encodeFrame, encodeFrames, OpticalReceiver } from '@/lib/optical';
+import { createPaymentRequest, randomId, serializeRequest } from '@/lib/protocol';
+import { credit, getBalance } from '@/lib/wallet';
+import type { PaymentConfirmation, PaymentRequest, SettlementReceipt } from '@/lib/types';
 
 const FRAME_INTERVAL_MS = 120;
 const LOCAL_MERCHANT_BMONI_ID = 'usr_morrow_demo_local';
+
+type Stage = 'form' | 'broadcasting' | 'scanning' | 'received';
 
 // Dynamically imported only when live mode is on — see the comment on
 // RealBmoniAdapter in src/lib/bmoni.ts for why this can't be a static import.
@@ -27,13 +34,22 @@ async function resolveMerchantBmoniUserId() {
 
 export default function ReceiveScreen() {
   const theme = useTheme();
+  const [permission, requestPermission] = useCameraPermissions();
+  const [stage, setStage] = useState<Stage>('form');
   const [amount, setAmount] = useState('12500');
   const [note, setNote] = useState('Market order #184');
   const [request, setRequest] = useState<PaymentRequest | null>(null);
+  const [receivedReceipt, setReceivedReceipt] = useState<SettlementReceipt | null>(null);
   const [error, setError] = useState('');
+  const [scanError, setScanError] = useState('');
+  const [scanProgress, setScanProgress] = useState(0);
   const [frameIndex, setFrameIndex] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [preparing, setPreparing] = useState(false);
+  const [balance, setBalance] = useState<number | null>(null);
+
+  const confirmReceiverRef = useRef<OpticalReceiver | null>(null);
+  const confirmSettledRef = useRef(false);
 
   const frames = useMemo(() => (request ? encodeFrames(serializeRequest(request), request.id) : []), [request]);
 
@@ -71,14 +87,141 @@ export default function ReceiveScreen() {
     setPreparing(false);
     setRequest(next);
     setFrameIndex(0);
+    setStage('broadcasting');
+  }
+
+  function startScanningForConfirmation() {
+    confirmReceiverRef.current = new OpticalReceiver();
+    confirmSettledRef.current = false;
+    setScanError('');
+    setScanProgress(0);
+    setStage('scanning');
+  }
+
+  async function handleConfirmationScanned(result: BarcodeScanningResult) {
+    if (stage !== 'scanning' || confirmSettledRef.current || !request) return;
+    if (!confirmReceiverRef.current) confirmReceiverRef.current = new OpticalReceiver();
+    try {
+      const frame = decodeFrame(result.data);
+      const status = confirmReceiverRef.current.add(frame);
+      setScanProgress(status.total > 0 ? Math.min(1, status.received / status.total) : 0);
+      if (!status.complete) return;
+
+      confirmSettledRef.current = true;
+      const confirmation: PaymentConfirmation = deserializeConfirmation(confirmReceiverRef.current.result());
+      const verdict = await verifyPaymentConfirmation(confirmation, request);
+      if (!verdict.valid) throw new Error(verdict.reason ?? 'Could not verify this confirmation.');
+
+      await credit(confirmation.amountMinor);
+      await markConfirmationRedeemed(confirmation.requestId);
+
+      const receipt: SettlementReceipt = {
+        id: randomId('rcpt'),
+        requestId: request.id,
+        status: 'settled',
+        direction: 'received',
+        amountMinor: confirmation.amountMinor,
+        currency: confirmation.currency,
+        merchantName: request.merchant.name,
+        customerName: confirmation.payerLabel,
+        settledAt: Date.now(),
+        reference: confirmation.settlementReference,
+      };
+      await saveReceipt(receipt);
+      setBalance(await getBalance());
+      setReceivedReceipt(receipt);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setStage('received');
+    } catch (cause) {
+      confirmSettledRef.current = false;
+      setScanError(cause instanceof Error ? cause.message : 'Could not verify this confirmation.');
+    }
   }
 
   function reset() {
     setRequest(null);
+    setReceivedReceipt(null);
     setError('');
+    setScanError('');
+    setStage('form');
   }
 
-  if (request) {
+  if (stage === 'scanning') {
+    if (!permission?.granted) {
+      return (
+        <Screen>
+          <ThemedText type="title" style={styles.title}>
+            Scan confirmation
+          </ThemedText>
+          <Card>
+            <ThemedText>Morrow needs camera access to receive the payer's confirmation.</ThemedText>
+            <Button label="Grant camera access" onPress={requestPermission} />
+          </Card>
+        </Screen>
+      );
+    }
+    return (
+      <View style={styles.cameraContainer}>
+        <CameraView
+          style={StyleSheet.absoluteFill}
+          facing="back"
+          barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+          onBarcodeScanned={handleConfirmationScanned}
+        />
+        <View style={[StyleSheet.absoluteFill, styles.scanOverlay]} pointerEvents="none">
+          <View style={styles.scanFrame} />
+        </View>
+        <View style={styles.scanFooter}>
+          <ThemedText style={styles.scanHint}>Point your camera at the payer's confirmation screen</ThemedText>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${scanProgress * 100}%`, backgroundColor: theme.accent }]} />
+          </View>
+          {scanError ? (
+            <ThemedText style={styles.scanError} accessibilityLiveRegion="polite">
+              {scanError}
+            </ThemedText>
+          ) : null}
+          <Button label="Back to broadcast" variant="ghost" onPress={() => setStage('broadcasting')} />
+        </View>
+      </View>
+    );
+  }
+
+  if (stage === 'received' && receivedReceipt) {
+    return (
+      <Screen>
+        <ThemedText type="small" themeColor="positive">
+          Payment received
+        </ThemedText>
+        <ThemedText type="title" style={styles.amount}>
+          +{formatMoney(receivedReceipt.amountMinor, receivedReceipt.currency)}
+        </ThemedText>
+        <ThemedText themeColor="textSecondary">from {receivedReceipt.customerName}</ThemedText>
+
+        {balance !== null && (
+          <View style={styles.detailRow}>
+            <ThemedText themeColor="textSecondary">New balance</ThemedText>
+            <ThemedText type="smallBold">{formatMoney(balance, receivedReceipt.currency)}</ThemedText>
+          </View>
+        )}
+
+        <Card>
+          <View style={styles.detailRow}>
+            <ThemedText themeColor="textSecondary">Reference</ThemedText>
+            <ThemedText type="smallBold">{receivedReceipt.reference}</ThemedText>
+          </View>
+          <View style={styles.detailRow}>
+            <ThemedText themeColor="textSecondary">Received</ThemedText>
+            <ThemedText type="smallBold">{new Date(receivedReceipt.settledAt).toLocaleString()}</ThemedText>
+          </View>
+        </Card>
+
+        <Button label="New request" onPress={reset} />
+      </Screen>
+    );
+  }
+
+  if (stage === 'broadcasting' && request) {
     const currentFrame = frames[frameIndex];
     const expired = secondsLeft <= 0;
     return (
@@ -109,10 +252,11 @@ export default function ReceiveScreen() {
         <Card style={styles.truthNote}>
           <ThemedText type="small">Networkless handoff</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            This device and the payer's camera negotiate directly. Funds settle online through BMONI once the payer confirms.
+            This device and the payer's camera negotiate directly. Once the payer confirms, scan their screen to credit your balance.
           </ThemedText>
         </Card>
 
+        <Button label="I've been paid — scan confirmation" onPress={startScanningForConfirmation} />
         <Button label={expired ? 'Create a new request' : 'Cancel request'} variant="ghost" onPress={reset} />
       </Screen>
     );
@@ -169,6 +313,7 @@ export default function ReceiveScreen() {
 
 const styles = StyleSheet.create({
   title: { fontSize: 32, lineHeight: 38, paddingTop: Spacing.two },
+  amount: { fontSize: 40, lineHeight: 46 },
   amountRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   currencyPrefix: { fontSize: 28 },
   amountInput: { fontFamily: Fonts.sansSemiBold, fontSize: 36, flex: 1, padding: 0 },
@@ -177,4 +322,12 @@ const styles = StyleSheet.create({
   expiredBox: { width: 240, height: 240, alignItems: 'center', justifyContent: 'center' },
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   truthNote: { gap: Spacing.one },
+  cameraContainer: { flex: 1, backgroundColor: '#000000' },
+  scanOverlay: { alignItems: 'center', justifyContent: 'center' },
+  scanFrame: { width: 260, height: 260, borderRadius: 24, borderWidth: 2, borderColor: 'rgba(255,255,255,0.8)' },
+  scanFooter: { position: 'absolute', left: 0, right: 0, bottom: 48, paddingHorizontal: Spacing.four, gap: Spacing.two },
+  scanHint: { color: '#FFFFFF', textAlign: 'center' },
+  progressTrack: { height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' },
+  progressFill: { height: 4, borderRadius: 2 },
+  scanError: { color: '#FF8A73', textAlign: 'center' },
 });
