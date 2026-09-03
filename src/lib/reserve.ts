@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { digest, randomId } from './protocol';
-import { getDevicePublicKey, signCanonical, verifyCanonical } from './reserveKeys';
+import { getDevicePublicKey, signCanonical, verifyCanonical } from './deviceKeys';
 import type { Currency, OfflineAuthorization, ReserveAllowance, ReserveState } from './types';
 
 const STORAGE_KEY = 'morrow.reserve-state.v1';
