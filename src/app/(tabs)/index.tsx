@@ -11,9 +11,9 @@ import { useTheme } from '@/hooks/use-theme';
 import { formatMoney } from '@/lib/format';
 import { listReceipts } from '@/lib/history';
 import { createReserve, getActiveReserve } from '@/lib/reserve';
+import { deduct, getBalance } from '@/lib/wallet';
 import type { ReserveState, SettlementReceipt } from '@/lib/types';
 
-const SANDBOX_BALANCE_MINOR = 48200000;
 const LIVE_MODE = process.env.EXPO_PUBLIC_BMONI_MODE === 'live';
 const RESERVE_VALID_MS = 24 * 60 * 60 * 1000;
 
@@ -22,6 +22,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const [recent, setRecent] = useState<SettlementReceipt[]>([]);
   const [bmoniUserId, setBmoniUserId] = useState<string | null>(null);
+  const [balance, setBalance] = useState<number | null>(null);
   const [reserve, setReserve] = useState<ReserveState | null>(null);
   const [showReserveForm, setShowReserveForm] = useState(false);
   const [reserveAmount, setReserveAmount] = useState('20000');
@@ -32,6 +33,7 @@ export default function HomeScreen() {
     useCallback(() => {
       listReceipts().then(all => setRecent(all.slice(0, 3)));
       getActiveReserve().then(setReserve);
+      getBalance().then(setBalance);
       if (LIVE_MODE) {
         import('@/lib/bmoniApi')
           .then(({ stablecoinFor }) => import('@/lib/bmoniIdentity').then(m => m.ensureLocalBmoniIdentity(stablecoinFor('NGN'))))
@@ -48,9 +50,16 @@ export default function HomeScreen() {
       setReserveError('Enter a valid amount greater than zero.');
       return;
     }
+    const valueMinor = Math.round(number * 100);
     setCreatingReserve(true);
     try {
-      const next = await createReserve({ valueMinor: Math.round(number * 100), currency: 'NGN', validForMs: RESERVE_VALID_MS });
+      const currentBalance = await getBalance();
+      if (valueMinor > currentBalance) throw new Error('Insufficient balance to reserve that amount.');
+      // Moves the amount out of the spendable balance into the reserve —
+      // spending from the reserve later does not touch the wallet again.
+      await deduct(valueMinor);
+      const next = await createReserve({ valueMinor, currency: 'NGN', validForMs: RESERVE_VALID_MS });
+      setBalance(await getBalance());
       setReserve(next);
       setShowReserveForm(false);
     } catch (cause) {
@@ -76,7 +85,7 @@ export default function HomeScreen() {
           Sandbox balance
         </ThemedText>
         <ThemedText type="title" style={styles.balance}>
-          {formatMoney(SANDBOX_BALANCE_MINOR, 'NGN')}
+          {balance !== null ? formatMoney(balance, 'NGN') : '···'}
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
           BMONI · CNGN
@@ -170,17 +179,24 @@ export default function HomeScreen() {
           <ThemedText themeColor="textSecondary">No transactions yet. Send or receive your first payment to see it here.</ThemedText>
         </Card>
       ) : (
-        recent.map(item => (
-          <Card key={item.id} style={styles.activityRow}>
-            <View style={styles.activityInfo}>
-              <ThemedText type="default">{item.merchantName}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {new Date(item.settledAt).toLocaleString()} · {item.status === 'settled' ? 'Settled' : 'Pending'}
+        recent.map(item => {
+          const sent = item.direction === 'sent';
+          const counterparty = sent ? item.merchantName : item.customerName;
+          return (
+            <Card key={item.id} style={styles.activityRow}>
+              <View style={styles.activityInfo}>
+                <ThemedText type="default">{counterparty}</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {new Date(item.settledAt).toLocaleString()} · {item.status === 'settled' ? 'Settled' : 'Pending'}
+                </ThemedText>
+              </View>
+              <ThemedText type="smallBold" themeColor={sent ? 'text' : 'positive'}>
+                {sent ? '−' : '+'}
+                {formatMoney(item.amountMinor, item.currency)}
               </ThemedText>
-            </View>
-            <ThemedText type="smallBold">{formatMoney(item.amountMinor, item.currency)}</ThemedText>
-          </Card>
-        ))
+            </Card>
+          );
+        })
       )}
     </Screen>
   );
