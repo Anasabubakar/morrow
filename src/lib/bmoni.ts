@@ -20,7 +20,7 @@ export class LocalBmoniSandbox implements BmoniAdapter {
   async settle(request: PaymentRequest): Promise<SettlementReceipt> {
     await new Promise(resolve => setTimeout(resolve, 1250));
     return {
-      id: randomId('rcpt'), requestId: request.id, status: 'settled',
+      id: randomId('rcpt'), requestId: request.id, status: 'settled', direction: 'sent',
       amountMinor: request.amountMinor, currency: request.currency,
       merchantName: request.merchant.name, customerName: 'Ada Nwosu',
       settledAt: Date.now(), reference: `MRW-${Date.now().toString(36).toUpperCase()}`,
@@ -93,6 +93,7 @@ export class RealBmoniAdapter implements BmoniAdapter {
       id: randomId('rcpt'),
       requestId: request.id,
       status: 'settled',
+      direction: 'sent',
       amountMinor: request.amountMinor,
       currency: request.currency,
       merchantName: request.merchant.name,
