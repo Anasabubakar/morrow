@@ -12,4 +12,4 @@ Morrow uses the upstream `LTEncoder`, `LTDecoder`, deterministic logarithm, robu
 
 ## @noble/curves
 
-Morrow Reserve's offline authorization signing (`src/lib/reserveKeys.ts`) uses [`@noble/curves`](https://github.com/paulmillr/noble-curves) by Paul Miller, MIT licensed, for Ed25519 signing and verification. See `docs/RESERVE.md` for how it's used.
+Morrow Reserve's offline authorization signing (`src/lib/deviceKeys.ts`) uses [`@noble/curves`](https://github.com/paulmillr/noble-curves) by Paul Miller, MIT licensed, for Ed25519 signing and verification. See `docs/RESERVE.md` for how it's used.
