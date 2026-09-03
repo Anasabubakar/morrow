@@ -18,12 +18,30 @@ export type SettlementReceipt = {
   id: string;
   requestId: string;
   status: 'settled' | 'pending';
+  direction: 'sent' | 'received';
   amountMinor: number;
   currency: Currency;
   merchantName: string;
   customerName: string;
   settledAt: number;
   reference: string;
+};
+
+// Sent back from payer to merchant after a payment settles (either the
+// BMONI-simulated path or Morrow Reserve), so the merchant's device has
+// something concrete to verify and credit its own local balance against.
+export type PaymentConfirmation = {
+  version: 1;
+  type: 'payment.confirmation';
+  requestId: string;
+  amountMinor: number;
+  currency: Currency;
+  payerLabel: string;
+  settlementReference: string;
+  confirmedAt: number;
+  nonce: string;
+  signerPublicKey: string;
+  signature: string;
 };
 
 // Morrow Reserve: pre-authorized offline spending power. Provisioned while
