@@ -1,6 +1,7 @@
-import { ActivityIndicator, Pressable, StyleSheet, type PressableProps } from 'react-native';
+import { ActivityIndicator, StyleSheet, type PressableProps } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { PressScale } from '@/components/ui/motion';
 import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -15,22 +16,23 @@ export function Button({ label, variant = 'primary', loading, disabled, ...rest 
   const isDisabled = disabled || loading;
 
   const background = variant === 'primary' ? theme.accent : variant === 'secondary' ? theme.backgroundElement : 'transparent';
-  const textColor = variant === 'primary' ? '#FFFFFF' : theme.text;
+  const textColor = variant === 'primary' ? theme.accentText : theme.text;
 
   return (
-    <Pressable
+    <PressScale
       accessibilityRole="button"
       accessibilityState={{ disabled: isDisabled }}
       disabled={isDisabled}
-      style={({ pressed }) => [
+      haptic={!isDisabled}
+      style={[
         styles.base,
-        { backgroundColor: background, opacity: isDisabled ? 0.5 : pressed ? 0.85 : 1 },
+        { backgroundColor: background, opacity: isDisabled ? 0.5 : 1 },
         variant === 'ghost' && styles.ghostBorder,
         variant === 'ghost' && { borderColor: theme.border },
       ]}
       {...rest}>
       {loading ? <ActivityIndicator color={textColor} /> : <ThemedText style={[styles.label, { color: textColor }]}>{label}</ThemedText>}
-    </Pressable>
+    </PressScale>
   );
 }
 
