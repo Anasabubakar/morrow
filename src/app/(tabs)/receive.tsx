@@ -133,7 +133,12 @@ export default function ReceiveScreen() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setStage('received');
     } catch (cause) {
+      // A completed OpticalReceiver ignores every further frame (correct for
+      // a successful decode, wrong here) — without a fresh instance, every
+      // subsequent camera frame just re-triggers this same stale failure.
+      confirmReceiverRef.current = new OpticalReceiver();
       confirmSettledRef.current = false;
+      setScanProgress(0);
       setScanError(cause instanceof Error ? cause.message : 'Could not verify this confirmation.');
     }
   }
@@ -150,11 +155,14 @@ export default function ReceiveScreen() {
     if (!permission?.granted) {
       return (
         <Screen>
+          <ThemedText type="small" themeColor="textSecondary">
+            Last step for this request
+          </ThemedText>
           <ThemedText type="title" style={styles.title}>
-            Scan confirmation
+            Confirming payment
           </ThemedText>
           <Card>
-            <ThemedText>Morrow needs camera access to receive the payer's confirmation.</ThemedText>
+            <ThemedText>Morrow needs camera access, just for this one scan, to verify the payer's proof and credit your balance.</ThemedText>
             <Button label="Grant camera access" onPress={requestPermission} />
           </Card>
         </Screen>
@@ -172,7 +180,7 @@ export default function ReceiveScreen() {
           <View style={styles.scanFrame} />
         </View>
         <View style={styles.scanFooter}>
-          <ThemedText style={styles.scanHint}>Point your camera at the payer's confirmation screen</ThemedText>
+          <ThemedText style={styles.scanHint}>Point your camera at the payer's "One more scan" screen</ThemedText>
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${scanProgress * 100}%`, backgroundColor: theme.accent }]} />
           </View>
@@ -252,11 +260,11 @@ export default function ReceiveScreen() {
         <Card style={styles.truthNote}>
           <ThemedText type="small">Networkless handoff</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            This device and the payer's camera negotiate directly. Once the payer confirms, scan their screen to credit your balance.
+            This device and the payer's camera negotiate directly — there's no server watching for the payment to land. Once the payer shows their "One more scan" screen, use the button below to scan it and credit your own balance.
           </ThemedText>
         </Card>
 
-        <Button label="I've been paid — scan confirmation" onPress={startScanningForConfirmation} />
+        <Button label="Scan payer's proof to get credited" onPress={startScanningForConfirmation} />
         <Button label={expired ? 'Create a new request' : 'Cancel request'} variant="ghost" onPress={reset} />
       </Screen>
     );
