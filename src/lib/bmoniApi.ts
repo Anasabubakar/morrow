@@ -132,7 +132,7 @@ export function listWallets(userId: string) {
 }
 
 export function getBalances(userId: string) {
-  return bmoniFetch<{ balances: Array<{ currency: string; amount: string }> }>(
+  return bmoniFetch<{ balances: { currency: string; amount: string }[] }>(
     `/v1/users/${userId}/smart-wallets/account/balances`
   );
 }
