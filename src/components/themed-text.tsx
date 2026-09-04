@@ -21,7 +21,7 @@ export function ThemedText({ style, type = 'default', themeColor, ...rest }: The
         type === 'smallBold' && styles.smallBold,
         type === 'subtitle' && styles.subtitle,
         type === 'link' && styles.link,
-        type === 'linkPrimary' && styles.linkPrimary,
+        type === 'linkPrimary' && [styles.linkPrimary, { color: theme.accent }],
         type === 'code' && styles.code,
         style,
       ]}
@@ -65,7 +65,6 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sansMedium,
     lineHeight: 30,
     fontSize: 14,
-    color: '#5A5FF7',
   },
   code: {
     fontFamily: Fonts.mono,
