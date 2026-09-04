@@ -96,7 +96,12 @@ export default function SendScreen() {
       setReceived(parsed);
       setStage('review');
     } catch (cause) {
+      // A completed OpticalReceiver ignores every further frame (correct for
+      // a successful decode, wrong here) — without a fresh instance, every
+      // subsequent camera frame just re-triggers this same stale failure.
+      receiverRef.current = new OpticalReceiver();
       settledRef.current = false;
+      setProgress(0);
       setError(cause instanceof Error ? cause.message : 'Could not reconstruct the request.');
     }
   }
@@ -275,13 +280,15 @@ export default function SendScreen() {
     const currentFrame = confirmationFrames[confirmFrameIndex];
     return (
       <Screen>
-        <ThemedText type="small" themeColor="positive">
-          Your balance has been debited
+        <ThemedText type="small" themeColor="textSecondary">
+          Last step — proving it to {received.merchant.name}
         </ThemedText>
         <ThemedText type="title" style={styles.title}>
-          Confirm with {received.merchant.name}
+          One more scan
         </ThemedText>
-        <ThemedText themeColor="textSecondary">Hold this screen up to the merchant's camera to complete the transfer on their side.</ThemedText>
+        <ThemedText themeColor="textSecondary">
+          Your balance is already debited. Morrow has no server in between, so {received.merchant.name}'s balance only updates once they scan this proof — hand them your screen.
+        </ThemedText>
 
         <Card style={styles.qrCard}>
           {currentFrame && <QRCode value={encodeFrame(currentFrame)} size={240} backgroundColor={theme.surface} color={theme.text} />}
