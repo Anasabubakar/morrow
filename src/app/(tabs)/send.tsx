@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect } from 'expo-router';
 import QRCode from 'react-native-qrcode-svg';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
+import { ErrorState } from '@/components/ui/error-state';
 import { Card, Screen } from '@/components/ui/screen';
+import { useToast } from '@/components/ui/toast';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { bmoniAdapter } from '@/lib/bmoni';
@@ -26,6 +29,7 @@ const CONFIRM_FRAME_INTERVAL_MS = 120;
 
 export default function SendScreen() {
   const theme = useTheme();
+  const { showToast } = useToast();
   const [permission, requestPermission] = useCameraPermissions();
   const [stage, setStage] = useState<Stage>('scan');
   const [progress, setProgress] = useState(0);
@@ -37,14 +41,13 @@ export default function SendScreen() {
   const [error, setError] = useState('');
   const [cameraActive, setCameraActive] = useState(true);
   const [reserve, setReserve] = useState<ReserveState | null>(null);
+  const [expiresInMin, setExpiresInMin] = useState(0);
 
   const receiverRef = useRef<OpticalReceiver | null>(null);
   const settledRef = useRef(false);
 
-  const receiver = useMemo(() => {
-    if (!receiverRef.current) receiverRef.current = new OpticalReceiver();
-    return receiverRef.current;
-  }, []);
+  if (receiverRef.current === null) receiverRef.current = new OpticalReceiver();
+  const receiver = receiverRef.current;
 
   const confirmationFrames = useMemo(
     () => (confirmation ? encodeFrames(serializeConfirmation(confirmation), confirmation.requestId) : []),
@@ -56,6 +59,14 @@ export default function SendScreen() {
     const timer = setInterval(() => setConfirmFrameIndex(i => (i + 1) % confirmationFrames.length), CONFIRM_FRAME_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [confirmationFrames]);
+
+  useEffect(() => {
+    if (!received) return;
+    const tick = () => setExpiresInMin(Math.max(0, Math.round((received.expiresAt - Date.now()) / 60000)));
+    tick();
+    const timer = setInterval(tick, 15000);
+    return () => clearInterval(timer);
+  }, [received]);
 
   useFocusEffect(
     useCallback(() => {
@@ -139,9 +150,12 @@ export default function SendScreen() {
       setStage('settling');
       const nextReceipt = await bmoniAdapter.settle(received);
       await afterSettlement({ ...nextReceipt, status: 'settled', direction: 'sent' }, received, { deductWallet: true });
+      showToast({ message: `Sent ${formatMoney(received.amountMinor, received.currency)} — hand over your screen to confirm`, variant: 'success' });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Settlement could not be completed. Your account was not charged.');
+      const message = cause instanceof Error ? cause.message : 'Settlement could not be completed. Your account was not charged.';
+      setError(message);
       setStage('review');
+      showToast({ message, variant: 'error' });
     }
   }
 
@@ -175,8 +189,11 @@ export default function SendScreen() {
       // Already deducted from the wallet when this Reserve was created —
       // spending from it now only decrements the Reserve's own bookkeeping.
       await afterSettlement(nextReceipt, received, { deductWallet: false });
+      showToast({ message: 'Signed offline — hand over your screen to confirm', variant: 'success' });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not pay from Morrow Reserve.');
+      const message = cause instanceof Error ? cause.message : 'Could not pay from Morrow Reserve.';
+      setError(message);
+      showToast({ message, variant: 'error' });
     }
   }
 
@@ -184,20 +201,22 @@ export default function SendScreen() {
     if (!permission) return <Screen scroll={false} />;
     if (!permission.granted) {
       return (
-        <Screen>
-          <ThemedText type="title" style={styles.title}>
-            Send
-          </ThemedText>
-          <Card>
-            <ThemedText>Morrow needs camera access to receive payment requests optically.</ThemedText>
-            <Button label="Grant camera access" onPress={requestPermission} />
-          </Card>
-        </Screen>
+        <Animated.View key="scan-permission" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
+          <Screen>
+            <ThemedText type="title" style={styles.title}>
+              Send
+            </ThemedText>
+            <Card>
+              <ThemedText>Morrow needs camera access to receive payment requests optically.</ThemedText>
+              <Button label="Grant camera access" onPress={requestPermission} />
+            </Card>
+          </Screen>
+        </Animated.View>
       );
     }
 
     return (
-      <View style={styles.cameraContainer}>
+      <Animated.View key="scan" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.cameraContainer}>
         {cameraActive && (
           <CameraView
             style={StyleSheet.absoluteFill}
@@ -210,136 +229,146 @@ export default function SendScreen() {
           <View style={styles.scanFrame} />
         </View>
         <View style={styles.scanFooter}>
-          <ThemedText style={styles.scanHint}>Point your camera at the merchant's screen</ThemedText>
+          <ThemedText style={styles.scanHint}>Point your camera at the merchant&apos;s screen</ThemedText>
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${progress * 100}%`, backgroundColor: theme.accent }]} />
           </View>
-          {error ? (
-            <ThemedText style={styles.scanError} accessibilityLiveRegion="polite">
-              {error}
-            </ThemedText>
-          ) : null}
+          {error ? <ErrorState message={error} /> : null}
         </View>
-      </View>
+      </Animated.View>
     );
   }
 
   if ((stage === 'review' || stage === 'auth' || stage === 'settling') && received) {
     return (
-      <Screen>
-        <Button label="‹ Back to camera" variant="ghost" onPress={resetScan} disabled={stage !== 'review'} />
-        <ThemedText type="small" themeColor="textSecondary">
-          Paying
-        </ThemedText>
-        <ThemedText type="title" style={styles.title}>
-          {received.merchant.name}
-        </ThemedText>
-        <ThemedText type="title" style={styles.amount}>
-          {formatMoney(received.amountMinor, received.currency)}
-        </ThemedText>
-        <ThemedText themeColor="textSecondary">{received.note}</ThemedText>
-
-        <Card>
-          <ThemedText type="smallBold">Request verified</ThemedText>
+      <Animated.View key="review" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
+        <Screen>
+          <Button label="‹ Back to camera" variant="ghost" onPress={resetScan} disabled={stage !== 'review'} />
           <ThemedText type="small" themeColor="textSecondary">
-            SHA-256 integrity · fresh nonce · expires in {Math.max(0, Math.round((received.expiresAt - Date.now()) / 60000))} min
+            Paying
           </ThemedText>
-        </Card>
+          <ThemedText type="title" style={styles.title}>
+            {received.merchant.name}
+          </ThemedText>
+          <ThemedText type="title" style={styles.amount}>
+            {formatMoney(received.amountMinor, received.currency)}
+          </ThemedText>
+          <ThemedText themeColor="textSecondary">{received.note}</ThemedText>
 
-        <View style={styles.balanceRow}>
-          <ThemedText themeColor="textSecondary">Pay from</ThemedText>
-          <ThemedText type="smallBold">{balance !== null ? formatMoney(balance, received.currency) : '…'} available</ThemedText>
-        </View>
-
-        {error ? <ThemedText themeColor="danger">{error}</ThemedText> : null}
-
-        {stage === 'review' && <Button label="Confirm payment" onPress={confirm} />}
-        {stage === 'review' && reserve && reserve.allowance.valueMinor - reserve.spentMinor >= received.amountMinor && (
-          <>
-            <ThemedText type="small" themeColor="textSecondary" style={styles.orDivider}>
-              or, with no connection at all
+          <Card>
+            <ThemedText type="smallBold">Request verified</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              SHA-256 integrity · fresh nonce · expires in {expiresInMin} min
             </ThemedText>
-            <Button label={`Pay ${formatMoney(received.amountMinor, received.currency)} from Reserve (offline)`} variant="secondary" onPress={payFromReserve} />
-          </>
-        )}
-        {stage === 'auth' && (
-          <Card style={styles.processingRow}>
-            <ThemedText>Authenticating your device-held signing key…</ThemedText>
           </Card>
-        )}
-        {stage === 'settling' && (
-          <Card style={styles.processingRow}>
-            <ThemedText>Settling with BMONI. This step requires connectivity.</ThemedText>
-          </Card>
-        )}
-      </Screen>
+
+          <View style={styles.balanceRow}>
+            <ThemedText themeColor="textSecondary">Pay from</ThemedText>
+            <ThemedText type="smallBold">{balance !== null ? formatMoney(balance, received.currency) : '…'} available</ThemedText>
+          </View>
+
+          {error ? <ErrorState message={error} /> : null}
+
+          {stage === 'review' && <Button label="Confirm payment" onPress={confirm} />}
+          {stage === 'review' && reserve && reserve.allowance.valueMinor - reserve.spentMinor >= received.amountMinor && (
+            <>
+              <ThemedText type="small" themeColor="textSecondary" style={styles.orDivider}>
+                or, with no connection at all
+              </ThemedText>
+              <Button
+                label={`Pay ${formatMoney(received.amountMinor, received.currency)} from Reserve (offline)`}
+                variant="secondary"
+                onPress={payFromReserve}
+              />
+            </>
+          )}
+          {stage === 'auth' && (
+            <Card style={styles.processingRow}>
+              <ActivityIndicator color={theme.text} />
+              <ThemedText>Authenticating your device-held signing key…</ThemedText>
+            </Card>
+          )}
+          {stage === 'settling' && (
+            <Card style={styles.processingRow}>
+              <ActivityIndicator color={theme.text} />
+              <ThemedText>Settling with BMONI. This step requires connectivity.</ThemedText>
+            </Card>
+          )}
+        </Screen>
+      </Animated.View>
     );
   }
 
   if (stage === 'confirming' && confirmation && received) {
     const currentFrame = confirmationFrames[confirmFrameIndex];
     return (
-      <Screen>
-        <ThemedText type="small" themeColor="textSecondary">
-          Last step — proving it to {received.merchant.name}
-        </ThemedText>
-        <ThemedText type="title" style={styles.title}>
-          One more scan
-        </ThemedText>
-        <ThemedText themeColor="textSecondary">
-          Your balance is already debited. Morrow has no server in between, so {received.merchant.name}'s balance only updates once they scan this proof — hand them your screen.
-        </ThemedText>
+      <Animated.View key="confirming" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
+        <Screen>
+          <ThemedText type="small" themeColor="textSecondary">
+            Last step — proving it to {received.merchant.name}
+          </ThemedText>
+          <ThemedText type="title" style={styles.title}>
+            One more scan
+          </ThemedText>
+          <ThemedText themeColor="textSecondary">
+            Your balance is already debited. Morrow has no server in between, so {received.merchant.name}&apos;s balance only updates once they
+            scan this proof — hand them your screen.
+          </ThemedText>
 
-        <Card style={styles.qrCard}>
-          {currentFrame && <QRCode value={encodeFrame(currentFrame)} size={240} backgroundColor={theme.surface} color={theme.text} />}
-        </Card>
+          <Card style={styles.qrCard}>
+            {currentFrame && <QRCode value={encodeFrame(currentFrame)} size={240} backgroundColor={theme.surface} color={theme.text} />}
+          </Card>
 
-        <Button label="Done" onPress={() => setStage('done')} />
-      </Screen>
+          <Button label="Done" onPress={() => setStage('done')} />
+        </Screen>
+      </Animated.View>
     );
   }
 
   if (stage === 'done' && receipt) {
     const isPending = receipt.status === 'pending';
     return (
-      <Screen>
-        <ThemedText type="small" themeColor={isPending ? 'textSecondary' : 'positive'}>
-          {isPending ? 'Payment verified — settlement pending' : 'Payment settled'}
-        </ThemedText>
-        <ThemedText type="title" style={styles.amount}>
-          {formatMoney(receipt.amountMinor, receipt.currency)}
-        </ThemedText>
-        <ThemedText themeColor="textSecondary">to {receipt.merchantName}</ThemedText>
+      <Animated.View key="done" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
+        <Screen>
+          <ThemedText type="small" themeColor={isPending ? 'textSecondary' : 'positive'}>
+            {isPending ? 'Payment verified — settlement pending' : 'Payment settled'}
+          </ThemedText>
+          <ThemedText type="title" style={styles.amount}>
+            {formatMoney(receipt.amountMinor, receipt.currency)}
+          </ThemedText>
+          <ThemedText themeColor="textSecondary">to {receipt.merchantName}</ThemedText>
 
-        {balance !== null && (
-          <View style={styles.balanceRow}>
-            <ThemedText themeColor="textSecondary">New balance</ThemedText>
-            <ThemedText type="smallBold">{formatMoney(balance, receipt.currency)}</ThemedText>
-          </View>
-        )}
+          {balance !== null && (
+            <View style={styles.balanceRow}>
+              <ThemedText themeColor="textSecondary">New balance</ThemedText>
+              <ThemedText type="smallBold">{formatMoney(balance, receipt.currency)}</ThemedText>
+            </View>
+          )}
 
-        {isPending && (
+          {isPending && (
+            <Card>
+              <ThemedText type="smallBold">Paid from Morrow Reserve, offline</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                This device signed the authorization with no network connection. It will settle through BMONI once either device is back online —
+                see docs/RESERVE.md.
+              </ThemedText>
+            </Card>
+          )}
+
           <Card>
-            <ThemedText type="smallBold">Paid from Morrow Reserve, offline</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              This device signed the authorization with no network connection. It will settle through BMONI once either device is back online — see docs/RESERVE.md.
-            </ThemedText>
+            <View style={styles.receiptRow}>
+              <ThemedText themeColor="textSecondary">Reference</ThemedText>
+              <ThemedText type="smallBold">{receipt.reference}</ThemedText>
+            </View>
+            <View style={styles.receiptRow}>
+              <ThemedText themeColor="textSecondary">{isPending ? 'Signed' : 'Settled'}</ThemedText>
+              <ThemedText type="smallBold">{new Date(receipt.settledAt).toLocaleString()}</ThemedText>
+            </View>
           </Card>
-        )}
 
-        <Card>
-          <View style={styles.receiptRow}>
-            <ThemedText themeColor="textSecondary">Reference</ThemedText>
-            <ThemedText type="smallBold">{receipt.reference}</ThemedText>
-          </View>
-          <View style={styles.receiptRow}>
-            <ThemedText themeColor="textSecondary">{isPending ? 'Signed' : 'Settled'}</ThemedText>
-            <ThemedText type="smallBold">{new Date(receipt.settledAt).toLocaleString()}</ThemedText>
-          </View>
-        </Card>
-
-        <Button label="Send another payment" onPress={resetScan} />
-      </Screen>
+          <Button label="Send another payment" onPress={resetScan} />
+        </Screen>
+      </Animated.View>
     );
   }
 
@@ -347,6 +376,7 @@ export default function SendScreen() {
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   title: { fontSize: 28, lineHeight: 34 },
   amount: { fontSize: 40, lineHeight: 46 },
   cameraContainer: { flex: 1, backgroundColor: '#000000' },
@@ -356,9 +386,8 @@ const styles = StyleSheet.create({
   scanHint: { color: '#FFFFFF', textAlign: 'center' },
   progressTrack: { height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' },
   progressFill: { height: 4, borderRadius: 2 },
-  scanError: { color: '#FF8A73', textAlign: 'center' },
   balanceRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  processingRow: { alignItems: 'center' },
+  processingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two },
   qrCard: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.five },
   receiptRow: { flexDirection: 'row', justifyContent: 'space-between' },
   orDivider: { textAlign: 'center' },
