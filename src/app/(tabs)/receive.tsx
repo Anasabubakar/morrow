@@ -3,10 +3,13 @@ import { StyleSheet, TextInput, View } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import QRCode from 'react-native-qrcode-svg';
+import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
+import { ErrorState } from '@/components/ui/error-state';
 import { Card, Screen } from '@/components/ui/screen';
+import { useToast } from '@/components/ui/toast';
 import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { stablecoinFor } from '@/lib/bmoniApi';
@@ -34,6 +37,7 @@ async function resolveMerchantBmoniUserId() {
 
 export default function ReceiveScreen() {
   const theme = useTheme();
+  const { showToast } = useToast();
   const [permission, requestPermission] = useCameraPermissions();
   const [stage, setStage] = useState<Stage>('form');
   const [amount, setAmount] = useState('12500');
@@ -52,6 +56,12 @@ export default function ReceiveScreen() {
   const confirmSettledRef = useRef(false);
 
   const frames = useMemo(() => (request ? encodeFrames(serializeRequest(request), request.id) : []), [request]);
+
+  const glowPulse = useSharedValue(0.4);
+  useEffect(() => {
+    glowPulse.value = withRepeat(withTiming(1, { duration: 1100 }), -1, true);
+  }, [glowPulse]);
+  const glowStyle = useAnimatedStyle(() => ({ opacity: glowPulse.value }));
 
   useEffect(() => {
     if (!frames.length) return;
@@ -132,6 +142,7 @@ export default function ReceiveScreen() {
       setReceivedReceipt(receipt);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setStage('received');
+      showToast({ message: `Received ${formatMoney(confirmation.amountMinor, confirmation.currency)}`, variant: 'success' });
     } catch (cause) {
       // A completed OpticalReceiver ignores every further frame (correct for
       // a successful decode, wrong here) — without a fresh instance, every
@@ -139,7 +150,9 @@ export default function ReceiveScreen() {
       confirmReceiverRef.current = new OpticalReceiver();
       confirmSettledRef.current = false;
       setScanProgress(0);
-      setScanError(cause instanceof Error ? cause.message : 'Could not verify this confirmation.');
+      const message = cause instanceof Error ? cause.message : 'Could not verify this confirmation.';
+      setScanError(message);
+      showToast({ message, variant: 'error' });
     }
   }
 
@@ -154,22 +167,24 @@ export default function ReceiveScreen() {
   if (stage === 'scanning') {
     if (!permission?.granted) {
       return (
-        <Screen>
-          <ThemedText type="small" themeColor="textSecondary">
-            Last step for this request
-          </ThemedText>
-          <ThemedText type="title" style={styles.title}>
-            Confirming payment
-          </ThemedText>
-          <Card>
-            <ThemedText>Morrow needs camera access, just for this one scan, to verify the payer's proof and credit your balance.</ThemedText>
-            <Button label="Grant camera access" onPress={requestPermission} />
-          </Card>
-        </Screen>
+        <Animated.View key="scanning-permission" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
+          <Screen>
+            <ThemedText type="small" themeColor="textSecondary">
+              Last step for this request
+            </ThemedText>
+            <ThemedText type="title" style={styles.title}>
+              Confirming payment
+            </ThemedText>
+            <Card>
+              <ThemedText>Morrow needs camera access, just for this one scan, to verify the payer&apos;s proof and credit your balance.</ThemedText>
+              <Button label="Grant camera access" onPress={requestPermission} />
+            </Card>
+          </Screen>
+        </Animated.View>
       );
     }
     return (
-      <View style={styles.cameraContainer}>
+      <Animated.View key="scanning" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.cameraContainer}>
         <CameraView
           style={StyleSheet.absoluteFill}
           facing="back"
@@ -180,52 +195,50 @@ export default function ReceiveScreen() {
           <View style={styles.scanFrame} />
         </View>
         <View style={styles.scanFooter}>
-          <ThemedText style={styles.scanHint}>Point your camera at the payer's "One more scan" screen</ThemedText>
+          <ThemedText style={styles.scanHint}>Point your camera at the payer&apos;s &quot;One more scan&quot; screen</ThemedText>
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${scanProgress * 100}%`, backgroundColor: theme.accent }]} />
           </View>
-          {scanError ? (
-            <ThemedText style={styles.scanError} accessibilityLiveRegion="polite">
-              {scanError}
-            </ThemedText>
-          ) : null}
+          {scanError ? <ErrorState message={scanError} /> : null}
           <Button label="Back to broadcast" variant="ghost" onPress={() => setStage('broadcasting')} />
         </View>
-      </View>
+      </Animated.View>
     );
   }
 
   if (stage === 'received' && receivedReceipt) {
     return (
-      <Screen>
-        <ThemedText type="small" themeColor="positive">
-          Payment received
-        </ThemedText>
-        <ThemedText type="title" style={styles.amount}>
-          +{formatMoney(receivedReceipt.amountMinor, receivedReceipt.currency)}
-        </ThemedText>
-        <ThemedText themeColor="textSecondary">from {receivedReceipt.customerName}</ThemedText>
+      <Animated.View key="received" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
+        <Screen>
+          <ThemedText type="small" themeColor="positive">
+            Payment received
+          </ThemedText>
+          <ThemedText type="title" style={styles.amount}>
+            +{formatMoney(receivedReceipt.amountMinor, receivedReceipt.currency)}
+          </ThemedText>
+          <ThemedText themeColor="textSecondary">from {receivedReceipt.customerName}</ThemedText>
 
-        {balance !== null && (
-          <View style={styles.detailRow}>
-            <ThemedText themeColor="textSecondary">New balance</ThemedText>
-            <ThemedText type="smallBold">{formatMoney(balance, receivedReceipt.currency)}</ThemedText>
-          </View>
-        )}
+          {balance !== null && (
+            <View style={styles.detailRow}>
+              <ThemedText themeColor="textSecondary">New balance</ThemedText>
+              <ThemedText type="smallBold">{formatMoney(balance, receivedReceipt.currency)}</ThemedText>
+            </View>
+          )}
 
-        <Card>
-          <View style={styles.detailRow}>
-            <ThemedText themeColor="textSecondary">Reference</ThemedText>
-            <ThemedText type="smallBold">{receivedReceipt.reference}</ThemedText>
-          </View>
-          <View style={styles.detailRow}>
-            <ThemedText themeColor="textSecondary">Received</ThemedText>
-            <ThemedText type="smallBold">{new Date(receivedReceipt.settledAt).toLocaleString()}</ThemedText>
-          </View>
-        </Card>
+          <Card>
+            <View style={styles.detailRow}>
+              <ThemedText themeColor="textSecondary">Reference</ThemedText>
+              <ThemedText type="smallBold">{receivedReceipt.reference}</ThemedText>
+            </View>
+            <View style={styles.detailRow}>
+              <ThemedText themeColor="textSecondary">Received</ThemedText>
+              <ThemedText type="smallBold">{new Date(receivedReceipt.settledAt).toLocaleString()}</ThemedText>
+            </View>
+          </Card>
 
-        <Button label="New request" onPress={reset} />
-      </Screen>
+          <Button label="New request" onPress={reset} />
+        </Screen>
+      </Animated.View>
     );
   }
 
@@ -233,100 +246,109 @@ export default function ReceiveScreen() {
     const currentFrame = frames[frameIndex];
     const expired = secondsLeft <= 0;
     return (
-      <Screen>
-        <ThemedText type="title" style={styles.title}>
-          Broadcasting
-        </ThemedText>
-        <ThemedText themeColor="textSecondary">Hold this screen up to the payer's camera. No pairing or connection required.</ThemedText>
-
-        <Card style={styles.qrCard}>
-          {currentFrame && !expired ? (
-            <QRCode value={encodeFrame(currentFrame)} size={240} backgroundColor={theme.surface} color={theme.text} />
-          ) : (
-            <View style={styles.expiredBox}>
-              <ThemedText themeColor="danger">This request has expired.</ThemedText>
-            </View>
-          )}
-        </Card>
-
-        <View style={styles.detailRow}>
-          <ThemedText type="smallBold">{formatMoney(request.amountMinor, request.currency)}</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {expired ? 'Expired' : `Expires in ${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`}
+      <Animated.View key="broadcasting" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
+        <Screen>
+          <ThemedText type="title" style={styles.title}>
+            Broadcasting
           </ThemedText>
-        </View>
-        <ThemedText themeColor="textSecondary">{request.note}</ThemedText>
+          <ThemedText themeColor="textSecondary">Hold this screen up to the payer&apos;s camera. No pairing or connection required.</ThemedText>
 
-        <Card style={styles.truthNote}>
-          <ThemedText type="small">Networkless handoff</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            This device and the payer's camera negotiate directly — there's no server watching for the payment to land. Once the payer shows their "One more scan" screen, use the button below to scan it and credit your own balance.
-          </ThemedText>
-        </Card>
+          <View style={styles.qrWrap}>
+            {!expired && (
+              <Animated.View style={[styles.glow, { backgroundColor: theme.accent }, glowStyle]} pointerEvents="none" />
+            )}
+            <Card style={styles.qrCard}>
+              {currentFrame && !expired ? (
+                <QRCode value={encodeFrame(currentFrame)} size={240} backgroundColor={theme.surface} color={theme.text} />
+              ) : (
+                <View style={styles.expiredBox}>
+                  <ThemedText themeColor="danger">This request has expired.</ThemedText>
+                </View>
+              )}
+            </Card>
+          </View>
 
-        <Button label="Scan payer's proof to get credited" onPress={startScanningForConfirmation} />
-        <Button label={expired ? 'Create a new request' : 'Cancel request'} variant="ghost" onPress={reset} />
-      </Screen>
+          <View style={styles.detailRow}>
+            <ThemedText type="smallBold">{formatMoney(request.amountMinor, request.currency)}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {expired ? 'Expired' : `Expires in ${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`}
+            </ThemedText>
+          </View>
+          <ThemedText themeColor="textSecondary">{request.note}</ThemedText>
+
+          <Card style={styles.truthNote}>
+            <ThemedText type="small">Networkless handoff</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              This device and the payer&apos;s camera negotiate directly — there&apos;s no server watching for the payment to land. Once the payer
+              shows their &quot;One more scan&quot; screen, use the button below to scan it and credit your own balance.
+            </ThemedText>
+          </Card>
+
+          <Button label="Scan payer&apos;s proof to get credited" onPress={startScanningForConfirmation} />
+          <Button label={expired ? 'Create a new request' : 'Cancel request'} variant="ghost" onPress={reset} />
+        </Screen>
+      </Animated.View>
     );
   }
 
   return (
-    <Screen>
-      <ThemedText type="title" style={styles.title}>
-        Receive
-      </ThemedText>
-      <ThemedText themeColor="textSecondary">Create a payment request and broadcast it optically to the payer's camera.</ThemedText>
-
-      <Card>
-        <ThemedText type="small" themeColor="textSecondary">
-          Amount
+    <Animated.View key="form" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
+      <Screen>
+        <ThemedText type="title" style={styles.title}>
+          Receive
         </ThemedText>
-        <View style={styles.amountRow}>
-          <ThemedText type="title" style={styles.currencyPrefix}>
-            ₦
+        <ThemedText themeColor="textSecondary">Create a payment request and broadcast it optically to the payer&apos;s camera.</ThemedText>
+
+        <Card>
+          <ThemedText type="small" themeColor="textSecondary">
+            Amount
+          </ThemedText>
+          <View style={styles.amountRow}>
+            <ThemedText type="title" style={styles.currencyPrefix}>
+              ₦
+            </ThemedText>
+            <TextInput
+              value={amount}
+              onChangeText={setAmount}
+              keyboardType="decimal-pad"
+              style={[styles.amountInput, { color: theme.text }]}
+              accessibilityLabel="Payment amount"
+            />
+          </View>
+        </Card>
+
+        <Card>
+          <ThemedText type="small" themeColor="textSecondary">
+            Note
           </ThemedText>
           <TextInput
-            value={amount}
-            onChangeText={setAmount}
-            keyboardType="decimal-pad"
-            style={[styles.amountInput, { color: theme.text }]}
-            accessibilityLabel="Payment amount"
+            value={note}
+            onChangeText={setNote}
+            maxLength={80}
+            style={[styles.noteInput, { color: theme.text }]}
+            accessibilityLabel="Payment note"
           />
-        </View>
-      </Card>
+        </Card>
 
-      <Card>
-        <ThemedText type="small" themeColor="textSecondary">
-          Note
-        </ThemedText>
-        <TextInput
-          value={note}
-          onChangeText={setNote}
-          maxLength={80}
-          style={[styles.noteInput, { color: theme.text }]}
-          accessibilityLabel="Payment note"
-        />
-      </Card>
+        {error ? <ErrorState message={error} /> : null}
 
-      {error ? (
-        <ThemedText themeColor="danger" accessibilityLiveRegion="polite">
-          {error}
-        </ThemedText>
-      ) : null}
-
-      <Button label="Create payment request" onPress={createRequest} loading={preparing} />
-    </Screen>
+        <Button label="Create payment request" onPress={createRequest} loading={preparing} />
+      </Screen>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   title: { fontSize: 32, lineHeight: 38, paddingTop: Spacing.two },
   amount: { fontSize: 40, lineHeight: 46 },
   amountRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   currencyPrefix: { fontSize: 28 },
   amountInput: { fontFamily: Fonts.sansSemiBold, fontSize: 36, flex: 1, padding: 0 },
   noteInput: { fontFamily: Fonts.sansMedium, fontSize: 16, padding: 0 },
-  qrCard: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.five },
+  qrWrap: { padding: Spacing.three, alignItems: 'center', justifyContent: 'center' },
+  glow: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 36 },
+  qrCard: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.five, width: '100%' },
   expiredBox: { width: 240, height: 240, alignItems: 'center', justifyContent: 'center' },
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   truthNote: { gap: Spacing.one },
@@ -337,5 +359,4 @@ const styles = StyleSheet.create({
   scanHint: { color: '#FFFFFF', textAlign: 'center' },
   progressTrack: { height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' },
   progressFill: { height: 4, borderRadius: 2 },
-  scanError: { color: '#FF8A73', textAlign: 'center' },
 });
