@@ -1,9 +1,8 @@
 import { Tabs } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { StyleSheet, type ColorValue } from 'react-native';
+import { type ColorValue } from 'react-native';
 
-import { Fonts } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { FloatingTabBar } from '@/components/ui/floating-tab-bar';
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -12,16 +11,11 @@ function TabIcon({ outline, filled, color, focused }: { outline: IconName; fille
 }
 
 export default function TabLayout() {
-  const theme = useTheme();
-
   return (
     <Tabs
+      tabBar={props => <FloatingTabBar {...props} />}
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: theme.text,
-        tabBarInactiveTintColor: theme.textSecondary,
-        tabBarStyle: { backgroundColor: theme.surface, borderTopColor: theme.border },
-        tabBarLabelStyle: styles.label,
       }}>
       <Tabs.Screen
         name="index"
@@ -51,7 +45,3 @@ export default function TabLayout() {
     </Tabs>
   );
 }
-
-const styles = StyleSheet.create({
-  label: { fontFamily: Fonts.sansSemiBold, fontSize: 11 },
-});
