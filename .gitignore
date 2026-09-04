@@ -42,3 +42,6 @@ example
 # generated native folders
 /ios
 /android
+
+# local dev-server launch config (environment-specific)
+/.claude/
