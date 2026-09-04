@@ -1,10 +1,17 @@
 import { useCallback, useState } from 'react';
 import { StyleSheet, TextInput, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { Wordmark } from '@/components/brand/wordmark';
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
+import { ErrorState } from '@/components/ui/error-state';
+import { staggerDelay } from '@/components/ui/motion';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ThemeToggle } from '@/components/ui/theme-toggle';
+import { useToast } from '@/components/ui/toast';
+import { WalletCard } from '@/components/ui/wallet-card';
 import { Card, Screen } from '@/components/ui/screen';
 import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -20,7 +27,8 @@ const RESERVE_VALID_MS = 24 * 60 * 60 * 1000;
 export default function HomeScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const [recent, setRecent] = useState<SettlementReceipt[]>([]);
+  const { showToast } = useToast();
+  const [recent, setRecent] = useState<SettlementReceipt[] | null>(null);
   const [bmoniUserId, setBmoniUserId] = useState<string | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   const [reserve, setReserve] = useState<ReserveState | null>(null);
@@ -62,8 +70,11 @@ export default function HomeScreen() {
       setBalance(await getBalance());
       setReserve(next);
       setShowReserveForm(false);
+      showToast({ message: `Reserved ${formatMoney(valueMinor, 'NGN')} for offline spending`, variant: 'success' });
     } catch (cause) {
-      setReserveError(cause instanceof Error ? cause.message : 'Could not create the reserve.');
+      const message = cause instanceof Error ? cause.message : 'Could not create the reserve.';
+      setReserveError(message);
+      showToast({ message, variant: 'error' });
     } finally {
       setCreatingReserve(false);
     }
@@ -75,22 +86,38 @@ export default function HomeScreen() {
     <Screen>
       <View style={styles.header}>
         <Wordmark size={22} />
-        <View style={[styles.avatar, { backgroundColor: theme.backgroundElement }]}>
-          <ThemedText type="smallBold">AN</ThemedText>
+        <View style={styles.headerActions}>
+          <ThemeToggle />
+          <View style={[styles.avatar, { backgroundColor: theme.backgroundElement }]}>
+            <ThemedText type="smallBold">AN</ThemedText>
+          </View>
         </View>
       </View>
 
-      <Card>
-        <ThemedText type="small" themeColor="textSecondary">
-          Sandbox balance
-        </ThemedText>
-        <ThemedText type="title" style={styles.balance}>
-          {balance !== null ? formatMoney(balance, 'NGN') : '···'}
-        </ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          BMONI · CNGN
-        </ThemedText>
-      </Card>
+      <WalletCard
+        label="Sandbox balance"
+        balanceMinor={balance}
+        currency="NGN"
+        details={
+          <View style={styles.cardDetails}>
+            <ThemedText type="smallBold">Details</ThemedText>
+            {LIVE_MODE && bmoniUserId ? (
+              <ThemedText type="small" themeColor="textSecondary" selectable>
+                BMONI account · {bmoniUserId}
+              </ThemedText>
+            ) : (
+              <ThemedText type="small" themeColor="textSecondary">
+                Local sandbox wallet — not backed by real funds.
+              </ThemedText>
+            )}
+            {reserve && (
+              <ThemedText type="small" themeColor="textSecondary">
+                {formatMoney(reserveRemaining, reserve.allowance.currency)} held in Morrow Reserve
+              </ThemedText>
+            )}
+          </View>
+        }
+      />
 
       <Card>
         <View style={styles.reserveHeader}>
@@ -135,11 +162,7 @@ export default function HomeScreen() {
             <ThemedText type="small" themeColor="textSecondary">
               Available offline for 24 hours
             </ThemedText>
-            {reserveError ? (
-              <ThemedText themeColor="danger" accessibilityLiveRegion="polite">
-                {reserveError}
-              </ThemedText>
-            ) : null}
+            {reserveError ? <ErrorState message={reserveError} /> : null}
             <Button label="Add to Morrow Reserve" onPress={addToReserve} loading={creatingReserve} />
           </>
         ) : (
@@ -174,27 +197,34 @@ export default function HomeScreen() {
         </ThemedText>
       </View>
 
-      {recent.length === 0 ? (
+      {recent === null ? (
+        <>
+          <Skeleton height={64} borderRadius={20} />
+          <Skeleton height={64} borderRadius={20} />
+        </>
+      ) : recent.length === 0 ? (
         <Card>
           <ThemedText themeColor="textSecondary">No transactions yet. Send or receive your first payment to see it here.</ThemedText>
         </Card>
       ) : (
-        recent.map(item => {
+        recent.map((item, index) => {
           const sent = item.direction === 'sent';
           const counterparty = sent ? item.merchantName : item.customerName;
           return (
-            <Card key={item.id} style={styles.activityRow}>
-              <View style={styles.activityInfo}>
-                <ThemedText type="default">{counterparty}</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {new Date(item.settledAt).toLocaleString()} · {item.status === 'settled' ? 'Settled' : 'Pending'}
+            <Animated.View key={item.id} entering={FadeInDown.delay(staggerDelay(index)).duration(300)}>
+              <Card style={styles.activityRow}>
+                <View style={styles.activityInfo}>
+                  <ThemedText type="default">{counterparty}</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {new Date(item.settledAt).toLocaleString()} · {item.status === 'settled' ? 'Settled' : 'Pending'}
+                  </ThemedText>
+                </View>
+                <ThemedText type="smallBold" themeColor={sent ? 'text' : 'positive'}>
+                  {sent ? '−' : '+'}
+                  {formatMoney(item.amountMinor, item.currency)}
                 </ThemedText>
-              </View>
-              <ThemedText type="smallBold" themeColor={sent ? 'text' : 'positive'}>
-                {sent ? '−' : '+'}
-                {formatMoney(item.amountMinor, item.currency)}
-              </ThemedText>
-            </Card>
+              </Card>
+            </Animated.View>
           );
         })
       )}
@@ -204,8 +234,10 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: Spacing.two },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   avatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   balance: { fontSize: 36, lineHeight: 40 },
+  cardDetails: { gap: Spacing.one },
   reserveHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   amountRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   currencyPrefix: { fontSize: 24 },
