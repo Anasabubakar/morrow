@@ -42,6 +42,11 @@ export type PaymentConfirmation = {
   nonce: string;
   signerPublicKey: string;
   signature: string;
+  // Present only for Reserve-funded payments. Self-authenticating (carries
+  // its own signature over its own fields), so it is transported here
+  // unsigned by the outer confirmation and independently verified by the
+  // receiver — see verifyPaymentConfirmation in confirmation.ts.
+  offlineAuthorization?: OfflineAuthorization;
 };
 
 // Morrow Reserve: pre-authorized offline spending power. Provisioned while
@@ -84,6 +89,8 @@ export type OfflineAuthorization = {
 
 export type OpticalFrame = {
   v: 1;
+  /** Deterministic payload whitening; changes visual matrix without changing data. */
+  w?: 1;
   sessionId: number;
   seq: number;
   k: number;
