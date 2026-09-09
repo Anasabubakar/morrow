@@ -1,13 +1,24 @@
 import * as Crypto from 'expo-crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { Base64 } from 'js-base64';
 import type { PaymentRequest } from './types';
 
 export async function digest(value: string) {
-  return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, value);
+  // Expo Web delegates digestStringAsync to WebCrypto, which browsers block
+  // on LAN HTTP origins. Noble is the same audited SHA-256 primitive in pure
+  // JavaScript, so optical integrity works offline and on every Expo target.
+  return bytesToHex(sha256(utf8ToBytes(value)));
 }
 
 export function randomId(prefix: string) {
-  return `${prefix}_${Crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`;
+  // `crypto.randomUUID()` is absent in some Expo Web/embedded-browser
+  // environments even though secure random bytes are available. Generate the
+  // identifier directly from Expo Crypto so the same code works on web, iOS,
+  // Android and Expo Go without falling back to Math.random.
+  const randomBytes = Crypto.getRandomBytes(10);
+  const randomHex = Array.from(randomBytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${prefix}_${randomHex}`;
 }
 
 export async function createPaymentRequest(input: {
