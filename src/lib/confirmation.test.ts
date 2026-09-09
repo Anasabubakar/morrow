@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createPaymentConfirmation, deserializeConfirmation, markConfirmationRedeemed, serializeConfirmation, verifyPaymentConfirmation } from './confirmation';
+import { clearReserve, createReserve, spendFromReserve } from './reserve';
 import type { PaymentRequest } from './types';
 
 const request: PaymentRequest = {
@@ -65,8 +66,88 @@ describe('Payment confirmation', () => {
   it('rejects a confirmation already marked redeemed for that request', async () => {
     const uniqueRequest = { ...request, id: 'req_redeem_test' };
     const confirmation = await confirmFor(uniqueRequest);
-    await markConfirmationRedeemed(uniqueRequest.id);
+    await markConfirmationRedeemed(confirmation);
     const verdict = await verifyPaymentConfirmation(confirmation, uniqueRequest);
     expect(verdict.valid).toBe(false);
+  });
+
+  describe('Reserve-funded confirmations', () => {
+    beforeEach(async () => {
+      await clearReserve();
+    });
+
+    it('verifies the embedded offline authorization, not just the outer confirmation', async () => {
+      const reserveRequest = { ...request, id: 'req_reserve_1' };
+      await createReserve({ valueMinor: 2000000, currency: 'NGN', validForMs: 60_000 });
+      const auth = await spendFromReserve({
+        recipientRequestId: reserveRequest.id,
+        recipientName: reserveRequest.merchant.name,
+        amountMinor: reserveRequest.amountMinor,
+      });
+      const confirmation = await createPaymentConfirmation({
+        requestId: reserveRequest.id,
+        amountMinor: reserveRequest.amountMinor,
+        currency: reserveRequest.currency,
+        payerLabel: 'Test payer',
+        settlementReference: `${auth.allowanceId}:${auth.sequence}`,
+        offlineAuthorization: auth,
+      });
+      const verdict = await verifyPaymentConfirmation(confirmation, reserveRequest);
+      expect(verdict.valid).toBe(true);
+    });
+
+    it('rejects a confirmation whose embedded authorization was forged', async () => {
+      const reserveRequest = { ...request, id: 'req_reserve_2' };
+      await createReserve({ valueMinor: 2000000, currency: 'NGN', validForMs: 60_000 });
+      const auth = await spendFromReserve({
+        recipientRequestId: reserveRequest.id,
+        recipientName: reserveRequest.merchant.name,
+        amountMinor: reserveRequest.amountMinor,
+      });
+      const forgedAuth = { ...auth, amountMinor: auth.amountMinor * 10 };
+      const confirmation = await createPaymentConfirmation({
+        requestId: reserveRequest.id,
+        amountMinor: reserveRequest.amountMinor,
+        currency: reserveRequest.currency,
+        payerLabel: 'Test payer',
+        settlementReference: `${auth.allowanceId}:${auth.sequence}`,
+        offlineAuthorization: forgedAuth,
+      });
+      const verdict = await verifyPaymentConfirmation(confirmation, reserveRequest);
+      expect(verdict.valid).toBe(false);
+    });
+
+    it('rejects replaying the same offline authorization a second time', async () => {
+      const reserveRequest = { ...request, id: 'req_reserve_3' };
+      await createReserve({ valueMinor: 2000000, currency: 'NGN', validForMs: 60_000 });
+      const auth = await spendFromReserve({
+        recipientRequestId: reserveRequest.id,
+        recipientName: reserveRequest.merchant.name,
+        amountMinor: reserveRequest.amountMinor,
+      });
+      const confirmation = await createPaymentConfirmation({
+        requestId: reserveRequest.id,
+        amountMinor: reserveRequest.amountMinor,
+        currency: reserveRequest.currency,
+        payerLabel: 'Test payer',
+        settlementReference: `${auth.allowanceId}:${auth.sequence}`,
+        offlineAuthorization: auth,
+      });
+      await markConfirmationRedeemed(confirmation);
+
+      // A second, distinct confirmation (fresh nonce) wrapping the SAME
+      // already-redeemed authorization must still be rejected — this is the
+      // check that catches showing the same signed spend to two receivers.
+      const replay = await createPaymentConfirmation({
+        requestId: reserveRequest.id,
+        amountMinor: reserveRequest.amountMinor,
+        currency: reserveRequest.currency,
+        payerLabel: 'Test payer',
+        settlementReference: `${auth.allowanceId}:${auth.sequence}`,
+        offlineAuthorization: auth,
+      });
+      const verdict = await verifyPaymentConfirmation(replay, reserveRequest);
+      expect(verdict.valid).toBe(false);
+    });
   });
 });
