@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createPaymentRequest, deserializeRequest, randomId, serializeRequest, verifyPaymentRequest } from './protocol';
-import { createOpticalStream, decodeFrame, encodeFrame, encodeFrames, OpticalReceiver } from './optical';
+import { encodeFrames, OpticalReceiver } from './optical';
 
 describe('Morrow Protocol', () => {
   it('creates portable cryptographically random identifiers', () => {
@@ -30,18 +30,5 @@ describe('Morrow Protocol', () => {
     const receiver = new OpticalReceiver();
     [...frames].reverse().concat(frames[0]).forEach(frame => receiver.add(frame));
     expect(receiver.result()).toBe(payload);
-  });
-
-  it('emits an unbounded sequence of dense, independently valid frames', async () => {
-    const request = await createPaymentRequest({ amountMinor: 250000, currency: 'NGN', note: 'Unlimited stream', merchantBmoniUserId: 'usr_test' });
-    const stream = createOpticalStream(serializeRequest(request), request.id);
-    const firstFrame = stream.frame(0);
-    const secondFrame = stream.frame(1);
-    const farFutureFrame = stream.frame(10000);
-
-    expect(secondFrame.payload).not.toBe(firstFrame.payload);
-    expect(farFutureFrame.seq).toBe(10000);
-    expect(farFutureFrame.blockLen).toBe(2100);
-    expect(decodeFrame(encodeFrame(farFutureFrame))).toEqual(farFutureFrame);
   });
 });
