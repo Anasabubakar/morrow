@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, TextInput, View } from 'react-native';
+import { Linking, StyleSheet, TextInput, View } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
-import QRCode from 'react-native-qrcode-svg';
-import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/error-state';
+import { OpticalStream } from '@/components/ui/optical-stream';
 import { Card, Screen } from '@/components/ui/screen';
 import { useToast } from '@/components/ui/toast';
 import { Fonts, Spacing } from '@/constants/theme';
@@ -16,12 +16,11 @@ import { stablecoinFor } from '@/lib/bmoniApi';
 import { deserializeConfirmation, markConfirmationRedeemed, verifyPaymentConfirmation } from '@/lib/confirmation';
 import { formatMoney } from '@/lib/format';
 import { saveReceipt } from '@/lib/history';
-import { decodeFrame, encodeFrame, encodeFrames, OpticalReceiver } from '@/lib/optical';
+import { decodeFrame, OpticalReceiver } from '@/lib/optical';
 import { createPaymentRequest, randomId, serializeRequest } from '@/lib/protocol';
 import { credit, getBalance } from '@/lib/wallet';
 import type { PaymentConfirmation, PaymentRequest, SettlementReceipt } from '@/lib/types';
 
-const FRAME_INTERVAL_MS = 120;
 const LOCAL_MERCHANT_BMONI_ID = 'usr_morrow_demo_local';
 
 type Stage = 'form' | 'broadcasting' | 'scanning' | 'received';
@@ -47,7 +46,6 @@ export default function ReceiveScreen() {
   const [error, setError] = useState('');
   const [scanError, setScanError] = useState('');
   const [scanProgress, setScanProgress] = useState(0);
-  const [frameIndex, setFrameIndex] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [preparing, setPreparing] = useState(false);
   const [balance, setBalance] = useState<number | null>(null);
@@ -55,19 +53,7 @@ export default function ReceiveScreen() {
   const confirmReceiverRef = useRef<OpticalReceiver | null>(null);
   const confirmSettledRef = useRef(false);
 
-  const frames = useMemo(() => (request ? encodeFrames(serializeRequest(request), request.id) : []), [request]);
-
-  const glowPulse = useSharedValue(0.4);
-  useEffect(() => {
-    glowPulse.value = withRepeat(withTiming(1, { duration: 1100 }), -1, true);
-  }, [glowPulse]);
-  const glowStyle = useAnimatedStyle(() => ({ opacity: glowPulse.value }));
-
-  useEffect(() => {
-    if (!frames.length) return;
-    const timer = setInterval(() => setFrameIndex(i => (i + 1) % frames.length), FRAME_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [frames]);
+  const serializedRequest = useMemo(() => (request ? serializeRequest(request) : ''), [request]);
 
   useEffect(() => {
     if (!request) return;
@@ -96,7 +82,6 @@ export default function ReceiveScreen() {
     const next = await createPaymentRequest({ amountMinor: Math.round(number * 100), currency: 'NGN', note, merchantBmoniUserId });
     setPreparing(false);
     setRequest(next);
-    setFrameIndex(0);
     setStage('broadcasting');
   }
 
@@ -123,7 +108,7 @@ export default function ReceiveScreen() {
       if (!verdict.valid) throw new Error(verdict.reason ?? 'Could not verify this confirmation.');
 
       await credit(confirmation.amountMinor);
-      await markConfirmationRedeemed(confirmation.requestId);
+      await markConfirmationRedeemed(confirmation);
 
       const receipt: SettlementReceipt = {
         id: randomId('rcpt'),
@@ -177,7 +162,11 @@ export default function ReceiveScreen() {
             </ThemedText>
             <Card>
               <ThemedText>Morrow needs camera access, just for this one scan, to verify the payer&apos;s proof and credit your balance.</ThemedText>
-              <Button label="Grant camera access" onPress={requestPermission} />
+              {permission?.canAskAgain !== false ? (
+                <Button label="Grant camera access" onPress={requestPermission} />
+              ) : (
+                <Button label="Open settings to enable camera" onPress={() => Linking.openSettings()} />
+              )}
             </Card>
           </Screen>
         </Animated.View>
@@ -243,38 +232,32 @@ export default function ReceiveScreen() {
   }
 
   if (stage === 'broadcasting' && request) {
-    const currentFrame = frames[frameIndex];
     const expired = secondsLeft <= 0;
     return (
       <Animated.View key="broadcasting" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
-        <Screen>
-          <ThemedText type="title" style={styles.title}>
+        <Screen backgroundColor="#000000" style={styles.broadcastInner}>
+          <ThemedText type="title" style={[styles.title, styles.broadcastText]}>
             Broadcasting
           </ThemedText>
-          <ThemedText themeColor="textSecondary">Hold this screen up to the payer&apos;s camera. No pairing or connection required.</ThemedText>
+          <ThemedText style={styles.broadcastSecondary}>Hold this screen up to the payer&apos;s camera. No pairing or connection required.</ThemedText>
 
-          <View style={styles.qrWrap}>
-            {!expired && (
-              <Animated.View style={[styles.glow, { backgroundColor: theme.accent }, glowStyle]} pointerEvents="none" />
+          <View style={styles.streamWrap}>
+            {!expired ? (
+              <OpticalStream serialized={serializedRequest} sessionId={request.id} />
+            ) : (
+              <Card style={styles.expiredBox}>
+                <ThemedText themeColor="danger">This request has expired.</ThemedText>
+              </Card>
             )}
-            <Card style={styles.qrCard}>
-              {currentFrame && !expired ? (
-                <QRCode value={encodeFrame(currentFrame)} size={240} backgroundColor={theme.surface} color={theme.text} />
-              ) : (
-                <View style={styles.expiredBox}>
-                  <ThemedText themeColor="danger">This request has expired.</ThemedText>
-                </View>
-              )}
-            </Card>
           </View>
 
           <View style={styles.detailRow}>
-            <ThemedText type="smallBold">{formatMoney(request.amountMinor, request.currency)}</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
+            <ThemedText type="smallBold" style={styles.broadcastText}>{formatMoney(request.amountMinor, request.currency)}</ThemedText>
+            <ThemedText type="small" style={styles.broadcastSecondary}>
               {expired ? 'Expired' : `Expires in ${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`}
             </ThemedText>
           </View>
-          <ThemedText themeColor="textSecondary">{request.note}</ThemedText>
+          <ThemedText style={styles.broadcastSecondary}>{request.note}</ThemedText>
 
           <Card style={styles.truthNote}>
             <ThemedText type="small">Networkless handoff</ThemedText>
@@ -346,10 +329,11 @@ const styles = StyleSheet.create({
   currencyPrefix: { fontSize: 28 },
   amountInput: { fontFamily: Fonts.sansSemiBold, fontSize: 36, flex: 1, padding: 0 },
   noteInput: { fontFamily: Fonts.sansMedium, fontSize: 16, padding: 0 },
-  qrWrap: { padding: Spacing.three, alignItems: 'center', justifyContent: 'center' },
-  glow: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 36 },
-  qrCard: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.five, width: '100%' },
-  expiredBox: { width: 240, height: 240, alignItems: 'center', justifyContent: 'center' },
+  streamWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.two },
+  broadcastInner: { backgroundColor: '#000000' },
+  broadcastText: { color: '#FFFFFF' },
+  broadcastSecondary: { color: '#8E8E93' },
+  expiredBox: { width: '100%', height: 280, alignItems: 'center', justifyContent: 'center' },
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   truthNote: { gap: Spacing.one },
   cameraContainer: { flex: 1, backgroundColor: '#000000' },
