@@ -3,12 +3,12 @@ import { ActivityIndicator, Linking, StyleSheet, View } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect } from 'expo-router';
+import QRCode from 'react-native-qrcode-svg';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/error-state';
-import { OpticalStream } from '@/components/ui/optical-stream';
 import { Card, Screen } from '@/components/ui/screen';
 import { useToast } from '@/components/ui/toast';
 import { Spacing } from '@/constants/theme';
@@ -17,7 +17,7 @@ import { bmoniAdapter } from '@/lib/bmoni';
 import { createPaymentConfirmation, serializeConfirmation } from '@/lib/confirmation';
 import { formatMoney } from '@/lib/format';
 import { saveReceipt } from '@/lib/history';
-import { decodeFrame, OpticalReceiver } from '@/lib/optical';
+import { decodeFrame, encodeFrame, encodeFrames, OpticalReceiver } from '@/lib/optical';
 import { deserializeRequest, randomId, verifyPaymentRequest } from '@/lib/protocol';
 import { markProcessed, wasProcessed } from '@/lib/replay';
 import { getActiveReserve, spendFromReserve, verifyOfflineAuthorization } from '@/lib/reserve';
@@ -25,6 +25,7 @@ import { deduct, getBalance } from '@/lib/wallet';
 import type { OfflineAuthorization, PaymentConfirmation, PaymentRequest, ReserveState, SettlementReceipt } from '@/lib/types';
 
 type Stage = 'scan' | 'review' | 'auth' | 'settling' | 'confirming' | 'done';
+const CONFIRM_FRAME_INTERVAL_MS = 120;
 
 export default function SendScreen() {
   const theme = useTheme();
@@ -35,6 +36,7 @@ export default function SendScreen() {
   const [received, setReceived] = useState<PaymentRequest | null>(null);
   const [receipt, setReceipt] = useState<SettlementReceipt | null>(null);
   const [confirmation, setConfirmation] = useState<PaymentConfirmation | null>(null);
+  const [confirmFrameIndex, setConfirmFrameIndex] = useState(0);
   const [balance, setBalance] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [cameraActive, setCameraActive] = useState(true);
@@ -48,7 +50,16 @@ export default function SendScreen() {
   if (receiverRef.current === null) receiverRef.current = new OpticalReceiver();
   const receiver = receiverRef.current;
 
-  const serializedConfirmation = useMemo(() => (confirmation ? serializeConfirmation(confirmation) : ''), [confirmation]);
+  const confirmationFrames = useMemo(
+    () => (confirmation ? encodeFrames(serializeConfirmation(confirmation), confirmation.requestId) : []),
+    [confirmation]
+  );
+
+  useEffect(() => {
+    if (!confirmationFrames.length) return;
+    const timer = setInterval(() => setConfirmFrameIndex(i => (i + 1) % confirmationFrames.length), CONFIRM_FRAME_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [confirmationFrames]);
 
   useEffect(() => {
     if (!received) return;
@@ -75,6 +86,7 @@ export default function SendScreen() {
     setReceived(null);
     setReceipt(null);
     setConfirmation(null);
+    setConfirmFrameIndex(0);
     setError('');
     getBalance().then(setBalance);
   }
@@ -127,6 +139,7 @@ export default function SendScreen() {
     await saveReceipt(nextReceipt);
     setReceipt(nextReceipt);
     setConfirmation(nextConfirmation);
+    setConfirmFrameIndex(0);
     setStage('confirming');
   }
 
@@ -303,21 +316,24 @@ export default function SendScreen() {
   }
 
   if (stage === 'confirming' && confirmation && received) {
+    const currentFrame = confirmationFrames[confirmFrameIndex];
     return (
       <Animated.View key="confirming" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
-        <Screen backgroundColor="#000000" style={styles.broadcastInner}>
-          <ThemedText type="small" style={styles.broadcastSecondary}>
+        <Screen>
+          <ThemedText type="small" themeColor="textSecondary">
             Last step — proving it to {received.merchant.name}
           </ThemedText>
-          <ThemedText type="title" style={[styles.title, styles.broadcastText]}>
+          <ThemedText type="title" style={styles.title}>
             One more scan
           </ThemedText>
-          <ThemedText style={styles.broadcastSecondary}>
+          <ThemedText themeColor="textSecondary">
             Your balance is already debited. Morrow has no server in between, so {received.merchant.name}&apos;s balance only updates once they
             scan this proof — hand them your screen.
           </ThemedText>
 
-          <OpticalStream serialized={serializedConfirmation} sessionId={confirmation.requestId} />
+          <Card style={styles.qrCard}>
+            {currentFrame && <QRCode value={encodeFrame(currentFrame)} size={240} backgroundColor={theme.surface} color={theme.text} />}
+          </Card>
 
           <Button label="Done" onPress={() => setStage('done')} />
         </Screen>
@@ -388,9 +404,7 @@ const styles = StyleSheet.create({
   progressFill: { height: 4, borderRadius: 2 },
   balanceRow: { flexDirection: 'row', justifyContent: 'space-between' },
   processingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two },
-  broadcastInner: { backgroundColor: '#000000' },
-  broadcastText: { color: '#FFFFFF' },
-  broadcastSecondary: { color: '#8E8E93' },
+  qrCard: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.five },
   receiptRow: { flexDirection: 'row', justifyContent: 'space-between' },
   orDivider: { textAlign: 'center' },
 });
