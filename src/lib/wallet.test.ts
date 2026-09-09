@@ -27,4 +27,14 @@ describe('Wallet', () => {
     await expect(deduct(999999999)).rejects.toThrow('Insufficient balance');
     expect(await getBalance()).toBe(48200000);
   });
+
+  it('serializes concurrent deductions instead of losing one to a race', async () => {
+    await Promise.all([deduct(100000), deduct(100000), deduct(100000)]);
+    expect(await getBalance()).toBe(48200000 - 300000);
+  });
+
+  it('serializes a concurrent mix of deducts and credits', async () => {
+    await Promise.all([deduct(200000), credit(50000), deduct(200000)]);
+    expect(await getBalance()).toBe(48200000 - 200000 + 50000 - 200000);
+  });
 });
