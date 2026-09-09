@@ -4,15 +4,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-type ScreenProps = ViewProps & { scroll?: boolean };
+type ScreenProps = ViewProps & { scroll?: boolean; backgroundColor?: string };
 
-export function Screen({ scroll = true, style, children, ...rest }: ScreenProps) {
+export function Screen({ scroll = true, backgroundColor, style, children, ...rest }: ScreenProps) {
   const theme = useTheme();
   const Container = scroll ? ScrollView : View;
   const containerProps = scroll ? { contentContainerStyle: styles.content } : { style: styles.content };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: backgroundColor ?? theme.background }]} edges={['top', 'left', 'right']}>
       <Container {...containerProps} {...rest}>
         <View style={[styles.inner, style]}>{children}</View>
       </Container>
