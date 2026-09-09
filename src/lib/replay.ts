@@ -16,3 +16,7 @@ export async function markProcessed(requestId: string) {
   try { current = JSON.parse((await AsyncStorage.getItem(STORAGE_KEY)) ?? '[]'); } catch { /* reset malformed local state */ }
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify([requestId, ...current.filter(id => id !== requestId)].slice(0, 100)));
 }
+
+export async function clearProcessed() {
+  await AsyncStorage.removeItem(STORAGE_KEY);
+}
