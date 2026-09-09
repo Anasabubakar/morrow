@@ -18,3 +18,7 @@ export async function saveReceipt(receipt: SettlementReceipt) {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   return next;
 }
+
+export async function clearHistory() {
+  await AsyncStorage.removeItem(STORAGE_KEY);
+}
