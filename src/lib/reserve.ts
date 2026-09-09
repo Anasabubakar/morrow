@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { digest, randomId } from './protocol';
 import { getDevicePublicKey, signCanonical, verifyCanonical } from './deviceKeys';
+import { credit } from './wallet';
 import type { Currency, OfflineAuthorization, ReserveAllowance, ReserveState } from './types';
 
 const STORAGE_KEY = 'morrow.reserve-state.v1';
@@ -35,7 +36,14 @@ export async function getActiveReserve(): Promise<ReserveState | null> {
   const stored = await AsyncStorage.getItem(STORAGE_KEY);
   if (!stored) return null;
   const state = JSON.parse(stored) as ReserveState;
-  if (state.allowance.expiresAt <= Date.now()) return null;
+  if (state.allowance.expiresAt <= Date.now()) {
+    // An expired reserve otherwise just forfeits whatever was never spent —
+    // release it back to the wallet before clearing the allowance.
+    const unspent = state.allowance.valueMinor - state.spentMinor;
+    if (unspent > 0) await credit(unspent);
+    await AsyncStorage.removeItem(STORAGE_KEY);
+    return null;
+  }
   return state;
 }
 
@@ -65,44 +73,60 @@ export async function clearReserve() {
   await AsyncStorage.removeItem(STORAGE_KEY);
 }
 
-export async function spendFromReserve(input: {
+export async function clearRedemptionGuard() {
+  await AsyncStorage.removeItem(REDEEMED_KEY);
+}
+
+// getActiveReserve() + setItem() is a read-modify-write on the same counter
+// and spentMinor fields — two concurrent calls (a double-tap on "pay from
+// Reserve") would both read the same sequence number and race the write,
+// producing two validly-signed authorizations sharing one sequence. This
+// queue serializes spends so that can't happen.
+let spendQueue: Promise<unknown> = Promise.resolve();
+
+export function spendFromReserve(input: {
   recipientRequestId: string;
   recipientName: string;
   amountMinor: number;
 }): Promise<OfflineAuthorization> {
-  const state = await getActiveReserve();
-  if (!state) throw new Error('No active Morrow Reserve on this device.');
-  const remaining = state.allowance.valueMinor - state.spentMinor;
-  if (input.amountMinor > remaining) throw new Error('This payment exceeds what remains in your Morrow Reserve.');
+  const run = async () => {
+    const state = await getActiveReserve();
+    if (!state) throw new Error('No active Morrow Reserve on this device.');
+    const remaining = state.allowance.valueMinor - state.spentMinor;
+    if (input.amountMinor > remaining) throw new Error('This payment exceeds what remains in your Morrow Reserve.');
 
-  const sequence = state.counter + 1;
-  const remainingMinor = remaining - input.amountMinor;
-  const base = {
-    version: 1 as const,
-    type: 'reserve.authorization' as const,
-    allowanceId: state.allowance.allowanceId,
-    sequence,
-    recipientRequestId: input.recipientRequestId,
-    recipientName: input.recipientName,
-    amountMinor: input.amountMinor,
-    currency: state.allowance.currency,
-    remainingMinor,
-    previousStateHash: state.lastStateHash,
-    nonce: randomId('n'),
-    timestamp: Date.now(),
-    issuerPublicKey: state.allowance.issuerPublicKey,
-  };
-  const { signature } = await signCanonical(authFields(base));
-  const authorization: OfflineAuthorization = { ...base, signature };
+    const sequence = state.counter + 1;
+    const remainingMinor = remaining - input.amountMinor;
+    const base = {
+      version: 1 as const,
+      type: 'reserve.authorization' as const,
+      allowanceId: state.allowance.allowanceId,
+      sequence,
+      recipientRequestId: input.recipientRequestId,
+      recipientName: input.recipientName,
+      amountMinor: input.amountMinor,
+      currency: state.allowance.currency,
+      remainingMinor,
+      previousStateHash: state.lastStateHash,
+      nonce: randomId('n'),
+      timestamp: Date.now(),
+      issuerPublicKey: state.allowance.issuerPublicKey,
+    };
+    const { signature } = await signCanonical(authFields(base));
+    const authorization: OfflineAuthorization = { ...base, signature };
 
-  const nextState: ReserveState = {
-    allowance: state.allowance,
-    spentMinor: state.spentMinor + input.amountMinor,
-    counter: sequence,
-    lastStateHash: await digest(JSON.stringify(authFields(base))),
+    const nextState: ReserveState = {
+      allowance: state.allowance,
+      spentMinor: state.spentMinor + input.amountMinor,
+      counter: sequence,
+      lastStateHash: await digest(JSON.stringify(authFields(base))),
+    };
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+    return authorization;
   };
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
-  return authorization;
+  const next = spendQueue.then(run, run);
+  spendQueue = next.catch(() => {});
+  return next;
 }
 
 export type AuthorizationVerdict = { valid: boolean; reason?: string };
