@@ -17,19 +17,35 @@ export async function getBalance(): Promise<number> {
   return Number(stored);
 }
 
-export async function deduct(amountMinor: number): Promise<number> {
-  const current = await getBalance();
-  if (amountMinor > current) throw new Error('Insufficient balance for this payment.');
-  const next = current - amountMinor;
-  await AsyncStorage.setItem(STORAGE_KEY, String(next));
+// getBalance() + setItem() is a read-modify-write with no atomic increment in
+// AsyncStorage — two concurrent deduct()/credit() calls (a double-tap, or two
+// callers racing) can both read the same starting balance and the second
+// write silently clobbers the first. This chain serializes every call onto
+// one queue so they always see each other's effects.
+let mutation: Promise<unknown> = Promise.resolve();
+function serialized<T>(run: () => Promise<T>): Promise<T> {
+  const next = mutation.then(run, run);
+  mutation = next.catch(() => {});
   return next;
 }
 
-export async function credit(amountMinor: number): Promise<number> {
-  const current = await getBalance();
-  const next = current + amountMinor;
-  await AsyncStorage.setItem(STORAGE_KEY, String(next));
-  return next;
+export function deduct(amountMinor: number): Promise<number> {
+  return serialized(async () => {
+    const current = await getBalance();
+    if (amountMinor > current) throw new Error('Insufficient balance for this payment.');
+    const next = current - amountMinor;
+    await AsyncStorage.setItem(STORAGE_KEY, String(next));
+    return next;
+  });
+}
+
+export function credit(amountMinor: number): Promise<number> {
+  return serialized(async () => {
+    const current = await getBalance();
+    const next = current + amountMinor;
+    await AsyncStorage.setItem(STORAGE_KEY, String(next));
+    return next;
+  });
 }
 
 /** Test/demo only — resets this device's balance back to the starting amount. */
