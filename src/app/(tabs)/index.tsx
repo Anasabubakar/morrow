@@ -7,7 +7,7 @@ import { Wordmark } from '@/components/brand/wordmark';
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/error-state';
-import { staggerDelay } from '@/components/ui/motion';
+import { PressScale, staggerDelay } from '@/components/ui/motion';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { useToast } from '@/components/ui/toast';
@@ -15,10 +15,11 @@ import { WalletCard } from '@/components/ui/wallet-card';
 import { Card, Screen } from '@/components/ui/screen';
 import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { resetDemoState } from '@/lib/demo';
 import { formatMoney } from '@/lib/format';
 import { listReceipts } from '@/lib/history';
 import { createReserve, getActiveReserve } from '@/lib/reserve';
-import { deduct, getBalance } from '@/lib/wallet';
+import { credit, deduct, getBalance } from '@/lib/wallet';
 import type { ReserveState, SettlementReceipt } from '@/lib/types';
 
 const LIVE_MODE = process.env.EXPO_PUBLIC_BMONI_MODE === 'live';
@@ -66,7 +67,15 @@ export default function HomeScreen() {
       // Moves the amount out of the spendable balance into the reserve —
       // spending from the reserve later does not touch the wallet again.
       await deduct(valueMinor);
-      const next = await createReserve({ valueMinor, currency: 'NGN', validForMs: RESERVE_VALID_MS });
+      let next: ReserveState;
+      try {
+        next = await createReserve({ valueMinor, currency: 'NGN', validForMs: RESERVE_VALID_MS });
+      } catch (createFailure) {
+        // deduct() already succeeded — without this the money vanishes with
+        // no reserve to show for it.
+        await credit(valueMinor);
+        throw createFailure;
+      }
       setBalance(await getBalance());
       setReserve(next);
       setShowReserveForm(false);
@@ -82,15 +91,30 @@ export default function HomeScreen() {
 
   const reserveRemaining = reserve ? reserve.allowance.valueMinor - reserve.spentMinor : 0;
 
+  async function handleResetDemo() {
+    await resetDemoState();
+    setRecent([]);
+    setReserve(null);
+    setBalance(await getBalance());
+    setShowReserveForm(false);
+    showToast({ message: 'Demo reset — balance, Reserve, and history cleared', variant: 'info' });
+  }
+
   return (
     <Screen>
       <View style={styles.header}>
         <Wordmark size={22} />
         <View style={styles.headerActions}>
           <ThemeToggle />
-          <View style={[styles.avatar, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="smallBold">AN</ThemedText>
-          </View>
+          <PressScale
+            onLongPress={handleResetDemo}
+            delayLongPress={900}
+            accessibilityRole="button"
+            accessibilityLabel="Reset demo data. Hold to reset balance, Reserve, and history.">
+            <View style={[styles.avatar, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText type="smallBold">AN</ThemedText>
+            </View>
+          </PressScale>
         </View>
       </View>
 
