@@ -89,8 +89,6 @@ export type OfflineAuthorization = {
 
 export type OpticalFrame = {
   v: 1;
-  /** Deterministic payload whitening; changes visual matrix without changing data. */
-  w?: 1;
   sessionId: number;
   seq: number;
   k: number;
