@@ -7,20 +7,19 @@
     "icon": "./assets/images/icon.png",
     "scheme": "morrow",
     "userInterfaceStyle": "automatic",
-    "backgroundColor": "#0B0D12",
+    "backgroundColor": "#000000",
     "ios": {
       "bundleIdentifier": "com.morrow.pay"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#0B0D12",
+        "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.CAMERA"
       ],
       "package": "com.morrow.pay"
     },
@@ -33,7 +32,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0B0D12",
+          "backgroundColor": "#000000",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 96
         }
