@@ -3,7 +3,8 @@ import { Base64 } from 'js-base64';
 import { getDevicePublicKey, signCanonical, verifyCanonical } from './deviceKeys';
 import { randomId } from './protocol';
 import { markProcessed, wasProcessed } from './replay';
-import type { Currency, PaymentConfirmation, PaymentRequest } from './types';
+import { markRedeemed, verifyOfflineAuthorization } from './reserve';
+import type { Currency, OfflineAuthorization, PaymentConfirmation, PaymentRequest } from './types';
 
 export function serializeConfirmation(confirmation: PaymentConfirmation) {
   return Base64.encode(JSON.stringify(confirmation));
@@ -35,6 +36,7 @@ export async function createPaymentConfirmation(input: {
   currency: Currency;
   payerLabel: string;
   settlementReference: string;
+  offlineAuthorization?: OfflineAuthorization;
 }): Promise<PaymentConfirmation> {
   const base = {
     version: 1 as const,
@@ -49,7 +51,7 @@ export async function createPaymentConfirmation(input: {
     signerPublicKey: await getDevicePublicKey(),
   };
   const { signature } = await signCanonical(confirmationFields(base));
-  return { ...base, signature };
+  return { ...base, signature, offlineAuthorization: input.offlineAuthorization };
 }
 
 export type ConfirmationVerdict = { valid: boolean; reason?: string };
@@ -57,9 +59,14 @@ export type ConfirmationVerdict = { valid: boolean; reason?: string };
 /**
  * Verifies a PaymentConfirmation against the specific request it should be
  * settling: right request, right amount, genuine signature, not already
- * credited on this device. Does not (and cannot) confirm BMONI or Reserve
- * settlement truth independently — it proves the payer's device produced
- * this exact confirmation and it hasn't been redeemed here before.
+ * credited on this device. For BMONI-settled payments that's the full
+ * story — settlement truth lives with BMONI, not something this device can
+ * independently confirm. For Reserve-funded payments (offlineAuthorization
+ * present), this additionally verifies the embedded OfflineAuthorization
+ * itself — its own signature, its binding to this request, and that this
+ * exact (allowanceId, sequence) hasn't been redeemed on this device before —
+ * so the receiver is verifying the actual signed spend, not just trusting a
+ * same-shaped confirmation wrapping it.
  */
 export async function verifyPaymentConfirmation(
   confirmation: PaymentConfirmation,
@@ -80,9 +87,20 @@ export async function verifyPaymentConfirmation(
   if (await wasProcessed(`confirmation:${confirmation.requestId}`)) {
     return { valid: false, reason: 'A confirmation for this request has already been credited.' };
   }
+  const auth = confirmation.offlineAuthorization;
+  if (auth) {
+    if (auth.amountMinor !== confirmation.amountMinor || auth.currency !== confirmation.currency) {
+      return { valid: false, reason: 'The offline authorization amount does not match the confirmation.' };
+    }
+    const authVerdict = await verifyOfflineAuthorization(auth, expectedRequest.id);
+    if (!authVerdict.valid) return authVerdict;
+  }
   return { valid: true };
 }
 
-export async function markConfirmationRedeemed(requestId: string) {
-  await markProcessed(`confirmation:${requestId}`);
+export async function markConfirmationRedeemed(confirmation: PaymentConfirmation) {
+  await markProcessed(`confirmation:${confirmation.requestId}`);
+  if (confirmation.offlineAuthorization) {
+    await markRedeemed(confirmation.offlineAuthorization.allowanceId, confirmation.offlineAuthorization.sequence);
+  }
 }
