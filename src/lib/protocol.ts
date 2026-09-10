@@ -32,7 +32,7 @@ export async function createPaymentRequest(input: {
     version: 1 as const,
     type: 'payment.request' as const,
     id: randomId('req'),
-    merchant: { id: 'mer_morrow_demo', name: 'North & Pine', account: 'BMONI • 2048', bmoniUserId: input.merchantBmoniUserId },
+    merchant: { id: 'mer_morrow_demo', name: 'North & Pine', account: '•••• 2048', bmoniUserId: input.merchantBmoniUserId },
     amountMinor: input.amountMinor,
     currency: input.currency,
     note: input.note.trim() || 'Payment',
