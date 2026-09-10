@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, StyleSheet, TextInput, View } from 'react-native';
+import { Linking, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import QRCode from 'react-native-qrcode-svg';
@@ -23,6 +23,8 @@ import type { PaymentConfirmation, PaymentRequest, SettlementReceipt } from '@/l
 
 const FRAME_INTERVAL_MS = 120;
 const LOCAL_MERCHANT_BMONI_ID = 'usr_morrow_demo_local';
+const QR_MAX_SIZE = 240;
+const QR_SIDE_MARGIN = Spacing.four * 2 + Spacing.four * 2; // Screen padding + Card padding, both sides
 
 type Stage = 'form' | 'broadcasting' | 'scanning' | 'received';
 
@@ -38,6 +40,8 @@ async function resolveMerchantBmoniUserId() {
 export default function ReceiveScreen() {
   const theme = useTheme();
   const { showToast } = useToast();
+  const { width: windowWidth } = useWindowDimensions();
+  const qrSize = Math.min(QR_MAX_SIZE, windowWidth - QR_SIDE_MARGIN);
   const [permission, requestPermission] = useCameraPermissions();
   const [stage, setStage] = useState<Stage>('form');
   const [amount, setAmount] = useState('12500');
@@ -90,7 +94,7 @@ export default function ReceiveScreen() {
       merchantBmoniUserId = await resolveMerchantBmoniUserId();
     } catch (cause) {
       setPreparing(false);
-      setError(cause instanceof Error ? cause.message : 'Could not prepare a BMONI wallet for this request.');
+      setError(cause instanceof Error ? cause.message : 'Could not prepare a settlement account for this request.');
       return;
     }
     const next = await createPaymentRequest({ amountMinor: Math.round(number * 100), currency: 'NGN', note, merchantBmoniUserId });
@@ -217,26 +221,34 @@ export default function ReceiveScreen() {
           <ThemedText type="small" themeColor="positive">
             Payment received
           </ThemedText>
-          <ThemedText type="title" style={styles.amount}>
+          <ThemedText type="title" themeColor="positive" style={styles.amount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
             +{formatMoney(receivedReceipt.amountMinor, receivedReceipt.currency)}
           </ThemedText>
-          <ThemedText themeColor="textSecondary">from {receivedReceipt.customerName}</ThemedText>
+          <ThemedText themeColor="textSecondary" numberOfLines={1}>
+            from {receivedReceipt.customerName}
+          </ThemedText>
 
           {balance !== null && (
             <View style={styles.detailRow}>
               <ThemedText themeColor="textSecondary">New balance</ThemedText>
-              <ThemedText type="smallBold">{formatMoney(balance, receivedReceipt.currency)}</ThemedText>
+              <ThemedText type="smallBold" numberOfLines={1}>
+                {formatMoney(balance, receivedReceipt.currency)}
+              </ThemedText>
             </View>
           )}
 
           <Card>
             <View style={styles.detailRow}>
               <ThemedText themeColor="textSecondary">Reference</ThemedText>
-              <ThemedText type="smallBold">{receivedReceipt.reference}</ThemedText>
+              <ThemedText type="smallBold" numberOfLines={1} style={styles.detailValue}>
+                {receivedReceipt.reference}
+              </ThemedText>
             </View>
             <View style={styles.detailRow}>
               <ThemedText themeColor="textSecondary">Received</ThemedText>
-              <ThemedText type="smallBold">{new Date(receivedReceipt.settledAt).toLocaleString()}</ThemedText>
+              <ThemedText type="smallBold" numberOfLines={1} style={styles.detailValue}>
+                {new Date(receivedReceipt.settledAt).toLocaleString()}
+              </ThemedText>
             </View>
           </Card>
 
@@ -263,9 +275,9 @@ export default function ReceiveScreen() {
             )}
             <Card style={styles.qrCard}>
               {currentFrame && !expired ? (
-                <QRCode value={encodeFrame(currentFrame)} size={240} backgroundColor={theme.surface} color={theme.text} />
+                <QRCode value={encodeFrame(currentFrame)} size={qrSize} backgroundColor={theme.surface} color={theme.text} />
               ) : (
-                <View style={styles.expiredBox}>
+                <View style={[styles.expiredBox, { width: qrSize, height: qrSize }]}>
                   <ThemedText themeColor="danger">This request has expired.</ThemedText>
                 </View>
               )}
@@ -273,12 +285,16 @@ export default function ReceiveScreen() {
           </View>
 
           <View style={styles.detailRow}>
-            <ThemedText type="smallBold">{formatMoney(request.amountMinor, request.currency)}</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
+            <ThemedText type="smallBold" numberOfLines={1}>
+              {formatMoney(request.amountMinor, request.currency)}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
               {expired ? 'Expired' : `Expires in ${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`}
             </ThemedText>
           </View>
-          <ThemedText themeColor="textSecondary">{request.note}</ThemedText>
+          <ThemedText themeColor="textSecondary" numberOfLines={2}>
+            {request.note}
+          </ThemedText>
 
           <Card style={styles.truthNote}>
             <ThemedText type="small">Networkless handoff</ThemedText>
@@ -348,13 +364,14 @@ const styles = StyleSheet.create({
   amount: { fontSize: 40, lineHeight: 46 },
   amountRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   currencyPrefix: { fontSize: 28 },
-  amountInput: { fontFamily: Fonts.sansSemiBold, fontSize: 36, flex: 1, padding: 0 },
+  amountInput: { fontFamily: Fonts.sansSemiBold, fontSize: 36, flex: 1, padding: 0, minWidth: 0 },
   noteInput: { fontFamily: Fonts.sansMedium, fontSize: 16, padding: 0 },
   qrWrap: { padding: Spacing.three, alignItems: 'center', justifyContent: 'center' },
   glow: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 36 },
   qrCard: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.five, width: '100%' },
-  expiredBox: { width: 240, height: 240, alignItems: 'center', justifyContent: 'center' },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  expiredBox: { alignItems: 'center', justifyContent: 'center' },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
+  detailValue: { flexShrink: 1, textAlign: 'right' },
   truthNote: { gap: Spacing.one },
   cameraContainer: { flex: 1, backgroundColor: '#000000' },
   scanOverlay: { alignItems: 'center', justifyContent: 'center' },
