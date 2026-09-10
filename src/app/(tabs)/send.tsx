@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect } from 'expo-router';
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/error-state';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { Card, Screen } from '@/components/ui/screen';
+import { SuccessSeal } from '@/components/ui/success-seal';
 import { useToast } from '@/components/ui/toast';
 import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -51,7 +52,6 @@ export default function SendScreen() {
   const [payingFromReserve, setPayingFromReserve] = useState(false);
   const [expectedAmount, setExpectedAmount] = useState('');
   const [showExpectedAmount, setShowExpectedAmount] = useState(false);
-  const [amountConfirmed, setAmountConfirmed] = useState(false);
 
   const receiverRef = useRef<OpticalReceiver | null>(null);
   const settledRef = useRef(false);
@@ -99,18 +99,37 @@ export default function SendScreen() {
     setError('');
     setExpectedAmount('');
     setShowExpectedAmount(false);
-    setAmountConfirmed(false);
     getBalance().then(setBalance);
   }
 
   // Optional, sender-typed cross-check: catches a request whose amount was
   // set differently from whatever the sender and merchant actually agreed on
   // out loud, instead of relying purely on the sender noticing the number on
-  // screen. Blank by default — doesn't add friction unless used.
+  // screen. Blank by default — doesn't add friction unless used. Confirming
+  // with a mismatch still works, it just requires one explicit "pay anyway"
+  // tap via the same Alert-confirmation pattern used everywhere else in this
+  // screen, rather than swapping in a whole separate warning UI.
   const expectedAmountMinor = expectedAmount.trim() ? Math.round(Number(expectedAmount.replaceAll(',', '')) * 100) : null;
   const amountMismatch =
     received !== null && expectedAmountMinor !== null && Number.isFinite(expectedAmountMinor) && expectedAmountMinor !== received.amountMinor;
-  const readyToPay = !amountMismatch || amountConfirmed;
+
+  function confirmMismatchThenRun(run: () => void) {
+    if (!received || !amountMismatch) {
+      run();
+      return;
+    }
+    Alert.alert(
+      "Amount doesn't match",
+      `This request is for ${formatMoney(received.amountMinor, received.currency)}, not the ${formatMoney(
+        expectedAmountMinor!,
+        received.currency
+      )} you expected. Check with ${received.merchant.name} before paying.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Pay anyway', style: 'destructive', onPress: run },
+      ]
+    );
+  }
 
   async function handleBarcodeScanned(result: BarcodeScanningResult) {
     if (stage !== 'scan' || settledRef.current) return;
@@ -164,8 +183,12 @@ export default function SendScreen() {
     setStage('confirming');
   }
 
-  async function confirm() {
-    if (!received || !readyToPay) return;
+  function confirm() {
+    confirmMismatchThenRun(runConfirm);
+  }
+
+  async function runConfirm() {
+    if (!received) return;
     setError('');
     if (balance !== null && received.amountMinor > balance) {
       setError('Insufficient balance for this payment.');
@@ -186,8 +209,12 @@ export default function SendScreen() {
     }
   }
 
-  async function payFromReserve() {
-    if (!received || payingFromReserve || !readyToPay) return;
+  function payFromReserve() {
+    confirmMismatchThenRun(runPayFromReserve);
+  }
+
+  async function runPayFromReserve() {
+    if (!received || payingFromReserve) return;
     setError('');
     setPayingFromReserve(true);
     try {
@@ -227,6 +254,23 @@ export default function SendScreen() {
     } finally {
       setPayingFromReserve(false);
     }
+  }
+
+  // Wallet was already debited back when `confirm()`/`payFromReserve()` ran —
+  // this screen's only job left is getting proof into the merchant's hands.
+  // Nothing stops someone tapping Done without ever showing this screen, so
+  // the money would vanish with no one credited. This is the one guard rail
+  // available given there's no server to verify the scan actually happened.
+  function confirmDone() {
+    if (!received) return;
+    Alert.alert(
+      'Did they scan it?',
+      `${received.merchant.name}'s balance only updates once they scan this screen. If you leave now without showing it to them, your money is gone and they never receive it.`,
+      [
+        { text: 'Not yet', style: 'cancel' },
+        { text: 'Yes, they scanned it', onPress: () => setStage('done') },
+      ]
+    );
   }
 
   if (stage === 'scan') {
@@ -321,10 +365,7 @@ export default function SendScreen() {
                   </ThemedText>
                   <TextInput
                     value={expectedAmount}
-                    onChangeText={value => {
-                      setExpectedAmount(value);
-                      setAmountConfirmed(false);
-                    }}
+                    onChangeText={setExpectedAmount}
                     keyboardType="decimal-pad"
                     style={[styles.expectedAmountInput, { color: theme.text }]}
                     placeholder="0.00"
@@ -333,27 +374,20 @@ export default function SendScreen() {
                     autoFocus
                   />
                 </View>
+                {amountMismatch && (
+                  <ThemedText type="small" themeColor="danger">
+                    Doesn&apos;t match this request — you&apos;ll be asked to confirm before paying.
+                  </ThemedText>
+                )}
               </Card>
             ) : (
               <Button label="Verify this is the right amount" variant="ghost" onPress={() => setShowExpectedAmount(true)} />
             ))}
 
-          {stage === 'review' && amountMismatch && !amountConfirmed && (
-            <>
-              <ErrorState
-                message={`This request is for ${formatMoney(received.amountMinor, received.currency)}, not the ${formatMoney(
-                  expectedAmountMinor!,
-                  received.currency
-                )} you expected. Check with ${received.merchant.name} before continuing.`}
-              />
-              <Button label="Pay anyway" variant="ghost" onPress={() => setAmountConfirmed(true)} />
-            </>
-          )}
-
           {error ? <ErrorState message={error} /> : null}
 
-          {stage === 'review' && readyToPay && <Button label="Confirm payment" onPress={confirm} />}
-          {stage === 'review' && readyToPay && reserve && (
+          {stage === 'review' && <Button label="Confirm payment" onPress={confirm} />}
+          {stage === 'review' && reserve && (
             <>
               <ThemedText type="small" themeColor="textSecondary" style={styles.orDivider}>
                 or, with no connection at all
@@ -413,7 +447,7 @@ export default function SendScreen() {
             {currentFrame && <QRCode value={encodeFrame(currentFrame)} size={qrSize} backgroundColor={theme.surface} color={theme.text} />}
           </Card>
 
-          <Button label="Done" onPress={() => setStage('done')} />
+          <Button label="Done" onPress={confirmDone} />
         </Screen>
       </Animated.View>
     );
@@ -424,13 +458,20 @@ export default function SendScreen() {
     return (
       <Animated.View key="done" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
         <Screen>
-          <ThemedText type="small" themeColor={isPending ? 'textSecondary' : 'positive'}>
+          <SuccessSeal size={72} />
+          <ThemedText type="small" themeColor={isPending ? 'textSecondary' : 'positive'} style={styles.centerText}>
             {isPending ? 'Payment verified — settlement pending' : 'Payment settled'}
           </ThemedText>
-          <ThemedText type="title" themeColor="danger" style={styles.amount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+          <ThemedText
+            type="title"
+            themeColor="danger"
+            style={[styles.amount, styles.centerText]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.6}>
             −{formatMoney(receipt.amountMinor, receipt.currency)}
           </ThemedText>
-          <ThemedText themeColor="textSecondary" numberOfLines={1}>
+          <ThemedText themeColor="textSecondary" numberOfLines={1} style={styles.centerText}>
             to {receipt.merchantName}
           </ThemedText>
 
@@ -496,4 +537,5 @@ const styles = StyleSheet.create({
   amountRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   currencyPrefix: { fontSize: 24 },
   expectedAmountInput: { fontSize: 28, fontFamily: Fonts.sansSemiBold, flex: 1, padding: 0, minWidth: 0 },
+  centerText: { textAlign: 'center' },
 });
