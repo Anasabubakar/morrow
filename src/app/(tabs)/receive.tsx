@@ -6,10 +6,12 @@ import QRCode from 'react-native-qrcode-svg';
 import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
+import { AmountChips } from '@/components/ui/amount-chips';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/error-state';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { Card, Screen } from '@/components/ui/screen';
+import { SuccessSeal } from '@/components/ui/success-seal';
 import { useToast } from '@/components/ui/toast';
 import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -220,13 +222,20 @@ export default function ReceiveScreen() {
     return (
       <Animated.View key="received" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
         <Screen>
-          <ThemedText type="small" themeColor="positive">
+          <SuccessSeal size={72} />
+          <ThemedText type="small" themeColor="positive" style={styles.centerText}>
             Payment received
           </ThemedText>
-          <ThemedText type="title" themeColor="positive" style={styles.amount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+          <ThemedText
+            type="title"
+            themeColor="positive"
+            style={[styles.amount, styles.centerText]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.6}>
             +{formatMoney(receivedReceipt.amountMinor, receivedReceipt.currency)}
           </ThemedText>
-          <ThemedText themeColor="textSecondary" numberOfLines={1}>
+          <ThemedText themeColor="textSecondary" numberOfLines={1} style={styles.centerText}>
             from {receivedReceipt.customerName}
           </ThemedText>
 
@@ -337,6 +346,7 @@ export default function ReceiveScreen() {
               accessibilityLabel="Payment amount"
             />
           </View>
+          <AmountChips presetsMajor={[1000, 5000, 10000, 25000]} onSelect={major => setAmount(String(major))} />
         </Card>
 
         <Card>
@@ -374,6 +384,7 @@ const styles = StyleSheet.create({
   expiredBox: { alignItems: 'center', justifyContent: 'center' },
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
   detailValue: { flexShrink: 1, textAlign: 'right' },
+  centerText: { textAlign: 'center' },
   truthNote: { gap: Spacing.one },
   cameraContainer: { flex: 1, backgroundColor: '#000000' },
   scanOverlay: { alignItems: 'center', justifyContent: 'center' },
