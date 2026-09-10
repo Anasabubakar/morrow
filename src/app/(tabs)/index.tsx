@@ -8,6 +8,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/error-state';
 import { PressScale, staggerDelay } from '@/components/ui/motion';
+import { PrivateValue } from '@/components/ui/private-value';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { useToast } from '@/components/ui/toast';
@@ -16,7 +17,7 @@ import { Card, Screen } from '@/components/ui/screen';
 import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { resetDemoState } from '@/lib/demo';
-import { formatMoney } from '@/lib/format';
+import { fitFontSize, formatMoney } from '@/lib/format';
 import { listReceipts } from '@/lib/history';
 import { createReserve, getActiveReserve } from '@/lib/reserve';
 import { credit, deduct, getBalance } from '@/lib/wallet';
@@ -126,8 +127,8 @@ export default function HomeScreen() {
           <View style={styles.cardDetails}>
             <ThemedText type="smallBold">Details</ThemedText>
             {LIVE_MODE && bmoniUserId ? (
-              <ThemedText type="small" themeColor="textSecondary" selectable>
-                BMONI account · {bmoniUserId}
+              <ThemedText type="small" themeColor="textSecondary" selectable numberOfLines={1}>
+                Settlement account · {bmoniUserId}
               </ThemedText>
             ) : (
               <ThemedText type="small" themeColor="textSecondary">
@@ -135,9 +136,11 @@ export default function HomeScreen() {
               </ThemedText>
             )}
             {reserve && (
-              <ThemedText type="small" themeColor="textSecondary">
-                {formatMoney(reserveRemaining, reserve.allowance.currency)} held in Morrow Reserve
-              </ThemedText>
+              <PrivateValue>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {formatMoney(reserveRemaining, reserve.allowance.currency)} held in Morrow Reserve
+                </ThemedText>
+              </PrivateValue>
             )}
           </View>
         }
@@ -145,9 +148,11 @@ export default function HomeScreen() {
 
       <Card>
         <View style={styles.reserveHeader}>
-          <ThemedText type="smallBold">Morrow Reserve</ThemedText>
+          <ThemedText type="smallBold" numberOfLines={1}>
+            Morrow Reserve
+          </ThemedText>
           {reserve && (
-            <ThemedText type="small" themeColor="textSecondary">
+            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.reserveExpiry}>
               Expires {new Date(reserve.allowance.expiresAt).toLocaleString()}
             </ThemedText>
           )}
@@ -155,12 +160,19 @@ export default function HomeScreen() {
 
         {reserve ? (
           <>
-            <ThemedText type="title" style={styles.balance}>
-              {formatMoney(reserveRemaining, reserve.allowance.currency)}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              Available offline of {formatMoney(reserve.allowance.valueMinor, reserve.allowance.currency)}
-            </ThemedText>
+            <PrivateValue>
+              <ThemedText
+                type="title"
+                style={[styles.balance, { fontSize: fitFontSize(formatMoney(reserveRemaining, reserve.allowance.currency), 36, 13, 20) }]}
+                numberOfLines={1}>
+                {formatMoney(reserveRemaining, reserve.allowance.currency)}
+              </ThemedText>
+            </PrivateValue>
+            <PrivateValue>
+              <ThemedText type="small" themeColor="textSecondary">
+                Available offline of {formatMoney(reserve.allowance.valueMinor, reserve.allowance.currency)}
+              </ThemedText>
+            </PrivateValue>
           </>
         ) : (
           <ThemedText themeColor="textSecondary">
@@ -196,12 +208,12 @@ export default function HomeScreen() {
 
       {LIVE_MODE && (
         <Card>
-          <ThemedText type="smallBold">Live mode: BMONI account</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary" selectable>
+          <ThemedText type="smallBold">Live mode: settlement account</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary" selectable numberOfLines={1}>
             {bmoniUserId ?? 'Provisioning…'}
           </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            Use this ID to submit KYC and request sandbox test tokens for this device — see docs/BMONI_INTEGRATION.md.
+            Use this ID to complete KYC and request sandbox funding for this device.
           </ThemedText>
         </Card>
       )}
@@ -238,15 +250,19 @@ export default function HomeScreen() {
             <Animated.View key={item.id} entering={FadeInDown.delay(staggerDelay(index)).duration(300)}>
               <Card style={styles.activityRow}>
                 <View style={styles.activityInfo}>
-                  <ThemedText type="default">{counterparty}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
+                  <ThemedText type="default" numberOfLines={1}>
+                    {counterparty}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
                     {new Date(item.settledAt).toLocaleString()} · {item.status === 'settled' ? 'Settled' : 'Pending'}
                   </ThemedText>
                 </View>
-                <ThemedText type="smallBold" themeColor={sent ? 'text' : 'positive'}>
-                  {sent ? '−' : '+'}
-                  {formatMoney(item.amountMinor, item.currency)}
-                </ThemedText>
+                <PrivateValue>
+                  <ThemedText type="smallBold" themeColor={sent ? 'danger' : 'positive'} numberOfLines={1} style={styles.activityAmount}>
+                    {sent ? '−' : '+'}
+                    {formatMoney(item.amountMinor, item.currency)}
+                  </ThemedText>
+                </PrivateValue>
               </Card>
             </Animated.View>
           );
@@ -262,14 +278,16 @@ const styles = StyleSheet.create({
   avatar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   balance: { fontSize: 36, lineHeight: 40 },
   cardDetails: { gap: Spacing.one },
-  reserveHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  reserveHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
+  reserveExpiry: { flexShrink: 1, textAlign: 'right' },
   amountRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   currencyPrefix: { fontSize: 24 },
-  amountInput: { fontSize: 32, fontFamily: Fonts.sansSemiBold, flex: 1, padding: 0 },
+  amountInput: { fontSize: 32, fontFamily: Fonts.sansSemiBold, flex: 1, padding: 0, minWidth: 0 },
   actionsRow: { flexDirection: 'row', gap: Spacing.three },
   actionSlot: { flex: 1 },
   sectionHeader: { marginTop: Spacing.two },
   sectionTitle: { fontSize: 20, lineHeight: 26 },
-  activityRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  activityInfo: { gap: 2 },
+  activityRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  activityInfo: { flex: 1, minWidth: 0, gap: 2 },
+  activityAmount: { flexShrink: 0 },
 });
