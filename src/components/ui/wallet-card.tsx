@@ -5,10 +5,13 @@ import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { MorrowSymbol } from '@/components/brand/morrow-symbol';
 import { ThemedText } from '@/components/themed-text';
+import { BalanceVisibilityToggle } from '@/components/ui/balance-visibility-toggle';
 import { PressScale } from '@/components/ui/motion';
+import { PrivateValue } from '@/components/ui/private-value';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Spacing } from '@/constants/theme';
 import { useTheme, useThemeMode } from '@/hooks/use-theme';
-import { formatMoney } from '@/lib/format';
+import { fitFontSize, formatMoney } from '@/lib/format';
 import type { Currency } from '@/lib/types';
 
 export type WalletCardProps = {
@@ -23,7 +26,7 @@ const DARK_GRADIENT = ['#1C1C1E', '#000000'] as const;
 const LIGHT_GRADIENT = ['#FFFFFF', '#EFEFF1'] as const;
 
 /** Home balance display styled as an actual card, not a plain stat block. */
-export function WalletCard({ label, balanceMinor, currency, mark = 'BMONI · CNGN', details }: WalletCardProps) {
+export function WalletCard({ label, balanceMinor, currency, mark = 'Morrow Wallet', details }: WalletCardProps) {
   const theme = useTheme();
   const { resolvedMode } = useThemeMode();
   const [showDetails, setShowDetails] = useState(false);
@@ -76,14 +79,28 @@ export function WalletCard({ label, balanceMinor, currency, mark = 'BMONI · CNG
         </Animated.View>
       ) : (
         <Animated.View key="front" entering={FadeIn.duration(180)} exiting={FadeOut.duration(120)} style={styles.face}>
-          <ThemedText type="small" themeColor="textSecondary">
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
             {label}
           </ThemedText>
-          <ThemedText type="title" style={styles.balance}>
-            {balanceMinor !== null ? formatMoney(Math.round(displayMinor), currency) : '···'}
-          </ThemedText>
+          {balanceMinor !== null ? (
+            <View style={styles.balanceRow}>
+              <View style={styles.balanceTextSlot}>
+                <PrivateValue>
+                  <ThemedText
+                    type="title"
+                    style={[styles.balance, { fontSize: fitFontSize(formatMoney(Math.round(displayMinor), currency), 34, 8, 16) }]}
+                    numberOfLines={1}>
+                    {formatMoney(Math.round(displayMinor), currency)}
+                  </ThemedText>
+                </PrivateValue>
+              </View>
+              <BalanceVisibilityToggle />
+            </View>
+          ) : (
+            <Skeleton width={150} height={32} borderRadius={8} style={{ backgroundColor: resolvedMode === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(10,10,10,0.08)' }} />
+          )}
           <View style={styles.footer}>
-            <ThemedText type="small" themeColor="textSecondary">
+            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
               {mark}
             </ThemedText>
           </View>
@@ -104,6 +121,8 @@ const styles = StyleSheet.create({
   gradient: { opacity: 1 },
   watermark: { position: 'absolute', right: -20, bottom: -20, opacity: 0.06 },
   face: { flex: 1, padding: Spacing.four, justifyContent: 'space-between' },
-  balance: { fontSize: 34, lineHeight: 38 },
+  balanceRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  balanceTextSlot: { flex: 1, minWidth: 0 },
+  balance: { lineHeight: 40 },
   footer: { flexDirection: 'row', justifyContent: 'flex-end' },
 });
