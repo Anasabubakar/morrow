@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Linking, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect } from 'expo-router';
@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/error-state';
 import { Card, Screen } from '@/components/ui/screen';
 import { useToast } from '@/components/ui/toast';
-import { Spacing } from '@/constants/theme';
+import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { bmoniAdapter } from '@/lib/bmoni';
 import { createPaymentConfirmation, serializeConfirmation } from '@/lib/confirmation';
@@ -27,9 +27,14 @@ import type { OfflineAuthorization, PaymentConfirmation, PaymentRequest, Reserve
 type Stage = 'scan' | 'review' | 'auth' | 'settling' | 'confirming' | 'done';
 const CONFIRM_FRAME_INTERVAL_MS = 120;
 
+const QR_MAX_SIZE = 240;
+const QR_SIDE_MARGIN = Spacing.four * 2 + Spacing.four * 2; // Screen padding + Card padding, both sides
+
 export default function SendScreen() {
   const theme = useTheme();
   const { showToast } = useToast();
+  const { width: windowWidth } = useWindowDimensions();
+  const qrSize = Math.min(QR_MAX_SIZE, windowWidth - QR_SIDE_MARGIN);
   const [permission, requestPermission] = useCameraPermissions();
   const [stage, setStage] = useState<Stage>('scan');
   const [progress, setProgress] = useState(0);
@@ -43,6 +48,9 @@ export default function SendScreen() {
   const [reserve, setReserve] = useState<ReserveState | null>(null);
   const [expiresInMin, setExpiresInMin] = useState(0);
   const [payingFromReserve, setPayingFromReserve] = useState(false);
+  const [expectedAmount, setExpectedAmount] = useState('');
+  const [showExpectedAmount, setShowExpectedAmount] = useState(false);
+  const [amountConfirmed, setAmountConfirmed] = useState(false);
 
   const receiverRef = useRef<OpticalReceiver | null>(null);
   const settledRef = useRef(false);
@@ -88,8 +96,20 @@ export default function SendScreen() {
     setConfirmation(null);
     setConfirmFrameIndex(0);
     setError('');
+    setExpectedAmount('');
+    setShowExpectedAmount(false);
+    setAmountConfirmed(false);
     getBalance().then(setBalance);
   }
+
+  // Optional, sender-typed cross-check: catches a request whose amount was
+  // set differently from whatever the sender and merchant actually agreed on
+  // out loud, instead of relying purely on the sender noticing the number on
+  // screen. Blank by default — doesn't add friction unless used.
+  const expectedAmountMinor = expectedAmount.trim() ? Math.round(Number(expectedAmount.replaceAll(',', '')) * 100) : null;
+  const amountMismatch =
+    received !== null && expectedAmountMinor !== null && Number.isFinite(expectedAmountMinor) && expectedAmountMinor !== received.amountMinor;
+  const readyToPay = !amountMismatch || amountConfirmed;
 
   async function handleBarcodeScanned(result: BarcodeScanningResult) {
     if (stage !== 'scan' || settledRef.current) return;
@@ -144,7 +164,7 @@ export default function SendScreen() {
   }
 
   async function confirm() {
-    if (!received) return;
+    if (!received || !readyToPay) return;
     setError('');
     if (balance !== null && received.amountMinor > balance) {
       setError('Insufficient balance for this payment.');
@@ -166,7 +186,7 @@ export default function SendScreen() {
   }
 
   async function payFromReserve() {
-    if (!received || payingFromReserve) return;
+    if (!received || payingFromReserve || !readyToPay) return;
     setError('');
     setPayingFromReserve(true);
     try {
@@ -255,6 +275,8 @@ export default function SendScreen() {
   }
 
   if ((stage === 'review' || stage === 'auth' || stage === 'settling') && received) {
+    const reserveRemaining = reserve ? reserve.allowance.valueMinor - reserve.spentMinor : 0;
+    const reserveSufficient = reserve !== null && reserveRemaining >= received.amountMinor;
     return (
       <Animated.View key="review" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
         <Screen>
@@ -262,13 +284,15 @@ export default function SendScreen() {
           <ThemedText type="small" themeColor="textSecondary">
             Paying
           </ThemedText>
-          <ThemedText type="title" style={styles.title}>
+          <ThemedText type="title" style={styles.title} numberOfLines={2}>
             {received.merchant.name}
           </ThemedText>
-          <ThemedText type="title" style={styles.amount}>
+          <ThemedText type="title" style={styles.amount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
             {formatMoney(received.amountMinor, received.currency)}
           </ThemedText>
-          <ThemedText themeColor="textSecondary">{received.note}</ThemedText>
+          <ThemedText themeColor="textSecondary" numberOfLines={2}>
+            {received.note}
+          </ThemedText>
 
           <Card>
             <ThemedText type="smallBold">Request verified</ThemedText>
@@ -279,23 +303,76 @@ export default function SendScreen() {
 
           <View style={styles.balanceRow}>
             <ThemedText themeColor="textSecondary">Pay from</ThemedText>
-            <ThemedText type="smallBold">{balance !== null ? formatMoney(balance, received.currency) : '…'} available</ThemedText>
+            <ThemedText type="smallBold" numberOfLines={1}>
+              {balance !== null ? formatMoney(balance, received.currency) : '…'} available
+            </ThemedText>
           </View>
+
+          {stage === 'review' &&
+            (showExpectedAmount ? (
+              <Card>
+                <ThemedText type="small" themeColor="textSecondary">
+                  What did you agree to pay? (optional check)
+                </ThemedText>
+                <View style={styles.amountRow}>
+                  <ThemedText type="title" style={styles.currencyPrefix}>
+                    ₦
+                  </ThemedText>
+                  <TextInput
+                    value={expectedAmount}
+                    onChangeText={value => {
+                      setExpectedAmount(value);
+                      setAmountConfirmed(false);
+                    }}
+                    keyboardType="decimal-pad"
+                    style={[styles.expectedAmountInput, { color: theme.text }]}
+                    placeholder="0.00"
+                    placeholderTextColor={theme.textSecondary}
+                    accessibilityLabel="Amount you agreed to pay"
+                    autoFocus
+                  />
+                </View>
+              </Card>
+            ) : (
+              <Button label="Verify this is the right amount" variant="ghost" onPress={() => setShowExpectedAmount(true)} />
+            ))}
+
+          {stage === 'review' && amountMismatch && !amountConfirmed && (
+            <>
+              <ErrorState
+                message={`This request is for ${formatMoney(received.amountMinor, received.currency)}, not the ${formatMoney(
+                  expectedAmountMinor!,
+                  received.currency
+                )} you expected. Check with ${received.merchant.name} before continuing.`}
+              />
+              <Button label="Pay anyway" variant="ghost" onPress={() => setAmountConfirmed(true)} />
+            </>
+          )}
 
           {error ? <ErrorState message={error} /> : null}
 
-          {stage === 'review' && <Button label="Confirm payment" onPress={confirm} />}
-          {stage === 'review' && reserve && reserve.allowance.valueMinor - reserve.spentMinor >= received.amountMinor && (
+          {stage === 'review' && readyToPay && <Button label="Confirm payment" onPress={confirm} />}
+          {stage === 'review' && readyToPay && reserve && (
             <>
               <ThemedText type="small" themeColor="textSecondary" style={styles.orDivider}>
                 or, with no connection at all
               </ThemedText>
-              <Button
-                label={`Pay ${formatMoney(received.amountMinor, received.currency)} from Reserve (offline)`}
-                variant="secondary"
-                onPress={payFromReserve}
-                loading={payingFromReserve}
-              />
+              {reserveSufficient ? (
+                <Button
+                  label={`Pay ${formatMoney(received.amountMinor, received.currency)} from Reserve (offline)`}
+                  variant="secondary"
+                  onPress={payFromReserve}
+                  loading={payingFromReserve}
+                />
+              ) : (
+                <>
+                  <Button label="Not enough in Reserve for this" variant="secondary" disabled onPress={() => {}} />
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.orDivider}>
+                    Reserve has {formatMoney(reserveRemaining, reserve.allowance.currency)} available — this payment needs{' '}
+                    {formatMoney(received.amountMinor, received.currency)}.
+                  </ThemedText>
+                </>
+              )}
             </>
           )}
           {stage === 'auth' && (
@@ -307,7 +384,7 @@ export default function SendScreen() {
           {stage === 'settling' && (
             <Card style={styles.processingRow}>
               <ActivityIndicator color={theme.text} />
-              <ThemedText>Settling with BMONI. This step requires connectivity.</ThemedText>
+              <ThemedText>Settling your payment. This step requires connectivity.</ThemedText>
             </Card>
           )}
         </Screen>
@@ -320,7 +397,7 @@ export default function SendScreen() {
     return (
       <Animated.View key="confirming" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
         <Screen>
-          <ThemedText type="small" themeColor="textSecondary">
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
             Last step — proving it to {received.merchant.name}
           </ThemedText>
           <ThemedText type="title" style={styles.title}>
@@ -332,7 +409,7 @@ export default function SendScreen() {
           </ThemedText>
 
           <Card style={styles.qrCard}>
-            {currentFrame && <QRCode value={encodeFrame(currentFrame)} size={240} backgroundColor={theme.surface} color={theme.text} />}
+            {currentFrame && <QRCode value={encodeFrame(currentFrame)} size={qrSize} backgroundColor={theme.surface} color={theme.text} />}
           </Card>
 
           <Button label="Done" onPress={() => setStage('done')} />
@@ -349,15 +426,19 @@ export default function SendScreen() {
           <ThemedText type="small" themeColor={isPending ? 'textSecondary' : 'positive'}>
             {isPending ? 'Payment verified — settlement pending' : 'Payment settled'}
           </ThemedText>
-          <ThemedText type="title" style={styles.amount}>
-            {formatMoney(receipt.amountMinor, receipt.currency)}
+          <ThemedText type="title" themeColor="danger" style={styles.amount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+            −{formatMoney(receipt.amountMinor, receipt.currency)}
           </ThemedText>
-          <ThemedText themeColor="textSecondary">to {receipt.merchantName}</ThemedText>
+          <ThemedText themeColor="textSecondary" numberOfLines={1}>
+            to {receipt.merchantName}
+          </ThemedText>
 
           {balance !== null && (
             <View style={styles.balanceRow}>
               <ThemedText themeColor="textSecondary">New balance</ThemedText>
-              <ThemedText type="smallBold">{formatMoney(balance, receipt.currency)}</ThemedText>
+              <ThemedText type="smallBold" numberOfLines={1}>
+                {formatMoney(balance, receipt.currency)}
+              </ThemedText>
             </View>
           )}
 
@@ -365,8 +446,7 @@ export default function SendScreen() {
             <Card>
               <ThemedText type="smallBold">Paid from Morrow Reserve, offline</ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                This device signed the authorization with no network connection. It will settle through BMONI once either device is back online —
-                see docs/RESERVE.md.
+                This device signed the authorization with no network connection. It will settle automatically once either device is back online.
               </ThemedText>
             </Card>
           )}
@@ -374,11 +454,15 @@ export default function SendScreen() {
           <Card>
             <View style={styles.receiptRow}>
               <ThemedText themeColor="textSecondary">Reference</ThemedText>
-              <ThemedText type="smallBold">{receipt.reference}</ThemedText>
+              <ThemedText type="smallBold" numberOfLines={1} style={styles.receiptValue}>
+                {receipt.reference}
+              </ThemedText>
             </View>
             <View style={styles.receiptRow}>
               <ThemedText themeColor="textSecondary">{isPending ? 'Signed' : 'Settled'}</ThemedText>
-              <ThemedText type="smallBold">{new Date(receipt.settledAt).toLocaleString()}</ThemedText>
+              <ThemedText type="smallBold" numberOfLines={1} style={styles.receiptValue}>
+                {new Date(receipt.settledAt).toLocaleString()}
+              </ThemedText>
             </View>
           </Card>
 
@@ -402,9 +486,13 @@ const styles = StyleSheet.create({
   scanHint: { color: '#FFFFFF', textAlign: 'center' },
   progressTrack: { height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' },
   progressFill: { height: 4, borderRadius: 2 },
-  balanceRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  balanceRow: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.two },
   processingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two },
   qrCard: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.five },
-  receiptRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  receiptRow: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.two },
+  receiptValue: { flexShrink: 1, textAlign: 'right' },
   orDivider: { textAlign: 'center' },
+  amountRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  currencyPrefix: { fontSize: 24 },
+  expectedAmountInput: { fontSize: 28, fontFamily: Fonts.sansSemiBold, flex: 1, padding: 0, minWidth: 0 },
 });
