@@ -18,7 +18,17 @@ export function PrivateValue({ children }: { children: ReactNode }) {
         // A glass surface should materialize, not pop — fades in/out rather
         // than an instant intensity snap.
         <Animated.View entering={FadeIn.duration(220)} exiting={FadeOut.duration(160)} style={StyleSheet.absoluteFill} pointerEvents="none">
-          <BlurView intensity={60} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+          <BlurView
+            intensity={60}
+            tint={resolvedMode === 'dark' ? 'dark' : 'light'}
+            // BlurView on Android defaults to blurMethod="none", which just
+            // renders a flat semi-transparent tint instead of an actual
+            // blur — this is the real native blur renderer. Costs some
+            // performance on SDK 30 and below, worth it for a genuine glass
+            // effect instead of a solid grey block.
+            blurMethod="dimezisBlurView"
+            style={StyleSheet.absoluteFill}
+          />
         </Animated.View>
       )}
     </View>
