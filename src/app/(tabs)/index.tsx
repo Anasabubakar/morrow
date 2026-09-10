@@ -137,11 +137,10 @@ export default function HomeScreen() {
               </ThemedText>
             )}
             {reserve && (
-              <PrivateValue>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {formatMoney(reserveRemaining, reserve.allowance.currency)} held in Morrow Reserve
-                </ThemedText>
-              </PrivateValue>
+              <ThemedText type="small" themeColor="textSecondary">
+                <PrivateValue type="small" themeColor="textSecondary" value={formatMoney(reserveRemaining, reserve.allowance.currency)} /> held in
+                Morrow Reserve
+              </ThemedText>
             )}
           </View>
         }
@@ -161,19 +160,16 @@ export default function HomeScreen() {
 
         {reserve ? (
           <>
-            <PrivateValue>
-              <ThemedText
-                type="title"
-                style={[styles.balance, { fontSize: fitFontSize(formatMoney(reserveRemaining, reserve.allowance.currency), 36, 13, 20) }]}
-                numberOfLines={1}>
-                {formatMoney(reserveRemaining, reserve.allowance.currency)}
-              </ThemedText>
-            </PrivateValue>
-            <PrivateValue>
-              <ThemedText type="small" themeColor="textSecondary">
-                Available offline of {formatMoney(reserve.allowance.valueMinor, reserve.allowance.currency)}
-              </ThemedText>
-            </PrivateValue>
+            <PrivateValue
+              type="title"
+              style={[styles.balance, { fontSize: fitFontSize(formatMoney(reserveRemaining, reserve.allowance.currency), 36, 13, 20) }]}
+              numberOfLines={1}
+              value={formatMoney(reserveRemaining, reserve.allowance.currency)}
+            />
+            <ThemedText type="small" themeColor="textSecondary">
+              Available offline of{' '}
+              <PrivateValue type="small" themeColor="textSecondary" value={formatMoney(reserve.allowance.valueMinor, reserve.allowance.currency)} />
+            </ThemedText>
           </>
         ) : (
           <ThemedText themeColor="textSecondary">
@@ -201,7 +197,7 @@ export default function HomeScreen() {
               Available offline for 24 hours
             </ThemedText>
             {reserveError ? <ErrorState message={reserveError} /> : null}
-            <Button label="Add to Morrow Reserve" onPress={addToReserve} loading={creatingReserve} />
+            <Button label="Add to Reserve" onPress={addToReserve} loading={creatingReserve} />
           </>
         ) : (
           <Button label={reserve ? 'Add more to Reserve' : 'Add to Reserve'} variant="secondary" onPress={() => setShowReserveForm(true)} />
@@ -259,12 +255,13 @@ export default function HomeScreen() {
                     {new Date(item.settledAt).toLocaleString()} · {item.status === 'settled' ? 'Settled' : 'Pending'}
                   </ThemedText>
                 </View>
-                <PrivateValue>
-                  <ThemedText type="smallBold" themeColor={sent ? 'danger' : 'positive'} numberOfLines={1} style={styles.activityAmount}>
-                    {sent ? '−' : '+'}
-                    {formatMoney(item.amountMinor, item.currency)}
-                  </ThemedText>
-                </PrivateValue>
+                <PrivateValue
+                  type="smallBold"
+                  themeColor={sent ? 'danger' : 'positive'}
+                  numberOfLines={1}
+                  style={styles.activityAmount}
+                  value={`${sent ? '−' : '+'}${formatMoney(item.amountMinor, item.currency)}`}
+                />
               </Card>
             </Animated.View>
           );

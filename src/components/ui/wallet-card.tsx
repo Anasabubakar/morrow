@@ -85,14 +85,12 @@ export function WalletCard({ label, balanceMinor, currency, mark = 'Morrow Walle
           {balanceMinor !== null ? (
             <View style={styles.balanceRow}>
               <View style={styles.balanceTextSlot}>
-                <PrivateValue>
-                  <ThemedText
-                    type="title"
-                    style={[styles.balance, { fontSize: fitFontSize(formatMoney(Math.round(displayMinor), currency), 34, 8, 16) }]}
-                    numberOfLines={1}>
-                    {formatMoney(Math.round(displayMinor), currency)}
-                  </ThemedText>
-                </PrivateValue>
+                <PrivateValue
+                  type="title"
+                  style={[styles.balance, { fontSize: fitFontSize(formatMoney(Math.round(displayMinor), currency), 34, 8, 16) }]}
+                  numberOfLines={1}
+                  value={formatMoney(Math.round(displayMinor), currency)}
+                />
               </View>
               <BalanceVisibilityToggle />
             </View>

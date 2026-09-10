@@ -60,12 +60,12 @@ export default function ActivityScreen() {
                   </ThemedText>
                 </View>
                 <View style={styles.amountBlock}>
-                  <PrivateValue>
-                    <ThemedText type="smallBold" themeColor={sent ? 'danger' : 'positive'} numberOfLines={1}>
-                      {sent ? '−' : '+'}
-                      {formatMoney(item.amountMinor, item.currency)}
-                    </ThemedText>
-                  </PrivateValue>
+                  <PrivateValue
+                    type="smallBold"
+                    themeColor={sent ? 'danger' : 'positive'}
+                    numberOfLines={1}
+                    value={`${sent ? '−' : '+'}${formatMoney(item.amountMinor, item.currency)}`}
+                  />
                   <ThemedText type="small" themeColor={item.status === 'settled' ? 'positive' : 'textSecondary'} numberOfLines={1}>
                     {item.status === 'settled' ? 'Settled' : 'Pending settlement'}
                   </ThemedText>
