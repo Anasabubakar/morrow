@@ -1,6 +1,7 @@
 import { BlurView } from 'expo-blur';
 import type { ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { useBalanceVisibility } from '@/hooks/use-balance-visibility';
 import { useThemeMode } from '@/hooks/use-theme';
@@ -14,7 +15,11 @@ export function PrivateValue({ children }: { children: ReactNode }) {
     <View style={styles.wrap}>
       {children}
       {!visible && (
-        <BlurView intensity={60} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={StyleSheet.absoluteFill} pointerEvents="none" />
+        // A glass surface should materialize, not pop — fades in/out rather
+        // than an instant intensity snap.
+        <Animated.View entering={FadeIn.duration(220)} exiting={FadeOut.duration(160)} style={StyleSheet.absoluteFill} pointerEvents="none">
+          <BlurView intensity={60} tint={resolvedMode === 'dark' ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+        </Animated.View>
       )}
     </View>
   );
