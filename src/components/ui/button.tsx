@@ -39,7 +39,9 @@ export function Button({ label, variant = 'primary', loading, disabled, ...rest 
           </Animated.View>
         ) : (
           <Animated.View key="label" entering={FadeIn.duration(120)} exiting={FadeOut.duration(80)}>
-            <ThemedText style={[styles.label, { color: textColor }]}>{label}</ThemedText>
+            <ThemedText style={[styles.label, { color: textColor }]} numberOfLines={1} adjustsFontSizeToFit>
+              {label}
+            </ThemedText>
           </Animated.View>
         )}
       </Animated.View>
