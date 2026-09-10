@@ -1,4 +1,5 @@
 import { ActivityIndicator, StyleSheet, type PressableProps } from 'react-native';
+import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { PressScale } from '@/components/ui/motion';
@@ -26,12 +27,22 @@ export function Button({ label, variant = 'primary', loading, disabled, ...rest 
       haptic={!isDisabled}
       style={[
         styles.base,
-        { backgroundColor: background, opacity: isDisabled ? 0.5 : 1 },
+        { backgroundColor: background },
         variant === 'ghost' && styles.ghostBorder,
         variant === 'ghost' && { borderColor: theme.border },
       ]}
       {...rest}>
-      {loading ? <ActivityIndicator color={textColor} /> : <ThemedText style={[styles.label, { color: textColor }]}>{label}</ThemedText>}
+      <Animated.View layout={LinearTransition.duration(150)} style={[styles.contentOpacity, { opacity: isDisabled ? 0.5 : 1 }]}>
+        {loading ? (
+          <Animated.View key="spinner" entering={FadeIn.duration(120)} exiting={FadeOut.duration(80)}>
+            <ActivityIndicator color={textColor} />
+          </Animated.View>
+        ) : (
+          <Animated.View key="label" entering={FadeIn.duration(120)} exiting={FadeOut.duration(80)}>
+            <ThemedText style={[styles.label, { color: textColor }]}>{label}</ThemedText>
+          </Animated.View>
+        )}
+      </Animated.View>
     </PressScale>
   );
 }
@@ -46,6 +57,10 @@ const styles = StyleSheet.create({
   },
   ghostBorder: {
     borderWidth: 1,
+  },
+  contentOpacity: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   label: {
     fontFamily: Fonts.sansSemiBold,
