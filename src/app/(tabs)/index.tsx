@@ -5,6 +5,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { Wordmark } from '@/components/brand/wordmark';
 import { ThemedText } from '@/components/themed-text';
+import { AmountChips } from '@/components/ui/amount-chips';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/error-state';
 import { PressScale, staggerDelay } from '@/components/ui/motion';
@@ -195,6 +196,7 @@ export default function HomeScreen() {
                 autoFocus
               />
             </View>
+            <AmountChips presetsMajor={[5000, 10000, 20000, 50000]} onSelect={major => setReserveAmount(String(major))} />
             <ThemedText type="small" themeColor="textSecondary">
               Available offline for 24 hours
             </ThemedText>
