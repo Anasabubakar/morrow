@@ -9,6 +9,7 @@ import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/ui/error-state';
+import { LoadingScreen } from '@/components/ui/loading-screen';
 import { Card, Screen } from '@/components/ui/screen';
 import { useToast } from '@/components/ui/toast';
 import { Fonts, Spacing } from '@/constants/theme';
@@ -229,7 +230,7 @@ export default function SendScreen() {
   }
 
   if (stage === 'scan') {
-    if (!permission) return <Screen scroll={false} />;
+    if (!permission) return <LoadingScreen />;
     if (!permission.granted) {
       return (
         <Animated.View key="scan-permission" entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} style={styles.flex}>
@@ -472,7 +473,7 @@ export default function SendScreen() {
     );
   }
 
-  return <Screen scroll={false} />;
+  return <LoadingScreen />;
 }
 
 const styles = StyleSheet.create({
