@@ -6,11 +6,14 @@ import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-goog
 
 import { SplashIntro } from '@/components/brand/splash-intro';
 import { ToastProvider } from '@/components/ui/toast';
+import { BalanceVisibilityProvider } from '@/hooks/use-balance-visibility';
 import { ThemeProvider, useThemeMode } from '@/hooks/use-theme';
 
 SplashScreen.preventAutoHideAsync();
 
-const SPLASH_INTRO_MAX_MS = 1400;
+// Comfortably past SplashIntro's own ~1.8s animation — this is a fallback
+// only, in case its reanimated completion callback doesn't fire.
+const SPLASH_INTRO_MAX_MS = 2400;
 
 function AppShell() {
   const { resolvedMode } = useThemeMode();
@@ -45,15 +48,15 @@ export default function RootLayout() {
     Inter_600SemiBold,
   });
 
-  useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync();
-  }, [fontsLoaded]);
-
+  // The native splash is hidden from SplashIntro's own mount effect below,
+  // not here — see the comment on SplashIntro for why.
   if (!fontsLoaded) return null;
 
   return (
     <ThemeProvider>
-      <AppShell />
+      <BalanceVisibilityProvider>
+        <AppShell />
+      </BalanceVisibilityProvider>
     </ThemeProvider>
   );
 }
