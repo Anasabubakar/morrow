@@ -6,6 +6,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { staggerDelay } from '@/components/ui/motion';
+import { PrivateValue } from '@/components/ui/private-value';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, Screen } from '@/components/ui/screen';
 import { Spacing } from '@/constants/theme';
@@ -51,17 +52,21 @@ export default function ActivityScreen() {
             <Animated.View key={item.id} entering={FadeInDown.delay(staggerDelay(index)).duration(300)}>
               <Card style={styles.row}>
                 <View style={styles.info}>
-                  <ThemedText type="default">{counterparty}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
+                  <ThemedText type="default" numberOfLines={1}>
+                    {counterparty}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
                     {new Date(item.settledAt).toLocaleString()} · {item.reference}
                   </ThemedText>
                 </View>
                 <View style={styles.amountBlock}>
-                  <ThemedText type="smallBold" themeColor={sent ? 'text' : 'positive'}>
-                    {sent ? '−' : '+'}
-                    {formatMoney(item.amountMinor, item.currency)}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor={item.status === 'settled' ? 'positive' : 'textSecondary'}>
+                  <PrivateValue>
+                    <ThemedText type="smallBold" themeColor={sent ? 'danger' : 'positive'} numberOfLines={1}>
+                      {sent ? '−' : '+'}
+                      {formatMoney(item.amountMinor, item.currency)}
+                    </ThemedText>
+                  </PrivateValue>
+                  <ThemedText type="small" themeColor={item.status === 'settled' ? 'positive' : 'textSecondary'} numberOfLines={1}>
                     {item.status === 'settled' ? 'Settled' : 'Pending settlement'}
                   </ThemedText>
                 </View>
@@ -76,9 +81,9 @@ export default function ActivityScreen() {
 
 const styles = StyleSheet.create({
   title: { fontSize: 32, lineHeight: 38, paddingTop: Spacing.two },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  info: { gap: 2 },
-  amountBlock: { alignItems: 'flex-end', gap: 2 },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  info: { flex: 1, minWidth: 0, gap: 2 },
+  amountBlock: { flexShrink: 0, alignItems: 'flex-end', gap: 2 },
   empty: { alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.five },
   emptyText: { textAlign: 'center' },
 });
