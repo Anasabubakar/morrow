@@ -14,7 +14,7 @@ on:
       - '.github/workflows/android-apk.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   apk:
@@ -61,3 +61,12 @@ jobs:
           path: Morrow-test.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish APK to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-test
+          name: Latest test build
+          prerelease: true
+          target_commitish: ${{ github.sha }}
+          files: Morrow-test.apk
